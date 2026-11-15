@@ -739,8 +739,8 @@ export async function queryAniListCatalog(
     );
     let items = mediaList.map((m, index) => mapAniListMediaToAnime(m, index));
 
-    // Fallback to Jikan if AniList returns empty media list
-    if (items.length === 0) {
+    // Fallback to Jikan if AniList returns empty media list on search
+    if (items.length === 0 && Boolean(params.search?.trim())) {
       const jikanFallback = await queryJikanCatalog({
         search: params.search,
         page,
@@ -943,6 +943,18 @@ export async function enrichScrapedItemsWithAniList(items: Anime[]): Promise<Ani
 const animeSeasonsCache = new Map<number, { seasons: RelatedSeason[]; expiresAt: number }>();
 const SEASONS_CACHE_TTL_MS = 60 * 60 * 1000;
 
+export function extractRootFranchiseTitle(rawTitle: string): string {
+  if (!rawTitle) return "";
+  return rawTitle
+    .replace(/\s*:\s*(?:the\s*final\s*season|final\s*season|season\s*\d+|part\s*\d+).*$/gi, "")
+    .replace(/\s*(?:the\s*final\s*season|final\s*season|the\s*final|kanketsu-hen|zenpen|kouhen)\b.*$/gi, "")
+    .replace(/\s*(?:\d+(?:st|nd|rd|th)\s*season|season\s*\d+|s\d+|part\s*\d+)\b.*$/gi, "")
+    .replace(/\s*(?:the\s*movie|gekijouban)\b.*$/gi, "")
+    .replace(/\s+(?:II|III|IV|V|VI|VII|VIII|IX|X)\b.*$/gi, "")
+    .replace(/\s*(?:sub(?:title)?\s*indo(?:nesia)?|bd|batch|ova|ona)\b.*$/gi, "")
+    .trim();
+}
+
 export function cleanBaseTitle(title = ""): string {
   return title
     .toLowerCase()
@@ -966,9 +978,29 @@ export function formatSeasonLabel(rawTitle: string, index: number, total: number
   if (seasonPartMatch) {
     return `Season ${seasonPartMatch[1]} Part ${seasonPartMatch[2]}`;
   }
-  const seasonMatch = lower.match(/(?:season|s)\s*(\d+)/i);
+  const seasonMatch =
+    lower.match(/(\d+)(?:st|nd|rd|th)\s*season/i) ||
+    lower.match(/(?:season|s)\s*(\d+)/i);
   if (seasonMatch) {
     return `Season ${seasonMatch[1]}`;
+  }
+  const romanMatch = lower.match(/\b(ii|iii|iv|v|vi|vii|viii|ix|x)\b/i);
+  if (romanMatch && romanMatch[1]) {
+    const roman = romanMatch[1].toUpperCase();
+    const romanToNum: Record<string, number> = {
+      II: 2,
+      III: 3,
+      IV: 4,
+      V: 5,
+      VI: 6,
+      VII: 7,
+      VIII: 8,
+      IX: 9,
+      X: 10,
+    };
+    if (romanToNum[roman]) {
+      return `Season ${romanToNum[roman]}`;
+    }
   }
   if (
     lower.includes("movie") ||
@@ -1014,7 +1046,9 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
     }));
   }
 
-  const baseTitle = cleanBaseTitle(anime.title.romaji || anime.title.english || "");
+  const rawTitle = anime.title.romaji || anime.title.english || "";
+  const rootFranchise = extractRootFranchiseTitle(rawTitle);
+  const baseTitle = cleanBaseTitle(rootFranchise || rawTitle);
 
   const query = `
     query ($id: Int, $search: String) {
@@ -1042,8 +1076,8 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
           }
         }
       }
-      Page(page: 1, perPage: 12) {
-        media(search: $search, type: ANIME, countryOfOrigin: JP) {
+      Page(page: 1, perPage: 15) {
+        media(search: $search, type: ANIME, countryOfOrigin: JP, format_in: [TV, TV_SHORT, MOVIE]) {
           id
           type
           format
@@ -1067,7 +1101,7 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
       },
       body: JSON.stringify({
         query,
-        variables: { id: anilistId, search: baseTitle || undefined },
+        variables: { id: anilistId, search: rootFranchise || baseTitle || undefined },
       }),
       signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
     });
@@ -1169,7 +1203,7 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
       if (edge.relationType && !allowedRelations.has(edge.relationType)) continue;
 
       const titleRomaji = node.title?.romaji || "";
-      const normNode = cleanBaseTitle(titleRomaji);
+      const normNode = cleanBaseTitle(extractRootFranchiseTitle(titleRomaji));
       if (baseTitle && !normNode.includes(baseTitle) && !baseTitle.includes(normNode)) {
         if (edge.relationType !== "PREQUEL" && edge.relationType !== "SEQUEL") continue;
       }
@@ -1185,13 +1219,13 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
       }
     }
 
-    // 3. Add search results matching base title
+    // 3. Add search results matching root franchise title
     const searchMedia = payload.data?.Page?.media ?? [];
     for (const m of searchMedia) {
       if (m.type !== "ANIME" || !m.format || !allowedFormats.has(m.format)) continue;
       if (m.countryOfOrigin === "CN") continue;
 
-      const normTitle = cleanBaseTitle(m.title?.romaji || "");
+      const normTitle = cleanBaseTitle(extractRootFranchiseTitle(m.title?.romaji || ""));
       if (baseTitle && !normTitle.includes(baseTitle) && !baseTitle.includes(normTitle)) {
         continue;
       }
@@ -1232,9 +1266,9 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
       };
     });
 
-    if (finalSeasons.length <= 1 && malId && Number.isFinite(malId)) {
+    if (finalSeasons.length === 0 && malId && Number.isFinite(malId)) {
       const jikanSeasons = await fetchJikanSeasons(malId);
-      if (jikanSeasons.length > finalSeasons.length) {
+      if (jikanSeasons.length > 0) {
         return jikanSeasons;
       }
     }

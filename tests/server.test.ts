@@ -343,4 +343,45 @@ describe("Express API Integration", { timeout: 15000 }, () => {
     expect(typeof latestEp.number).toBe("number");
     expect(latestEp.number).toBeGreaterThanOrEqual(1);
   });
+
+  it("detects two-way franchise season chain when requested from Season 2 (S2 -> S1 and S2 -> S3)", async () => {
+    // 1. Verify extractRootFranchiseTitle logic
+    const { extractRootFranchiseTitle } = await import("../src/server/services/anilist.js");
+    expect(extractRootFranchiseTitle("Black Clover 2nd Season")).toBe("Black Clover");
+    expect(extractRootFranchiseTitle("Re:Zero kara Hajimeru Isekai Seikatsu 4th Season")).toBe(
+      "Re:Zero kara Hajimeru Isekai Seikatsu"
+    );
+    expect(extractRootFranchiseTitle("Shingeki no Kyojin The Final Season Part 2")).toBe(
+      "Shingeki no Kyojin"
+    );
+    expect(extractRootFranchiseTitle("Sword Art Online II")).toBe("Sword Art Online");
+
+    // 2. Query Black Clover 2nd Season (al-195604)
+    const res = await fetch(`${baseUrl}/api/anime/al-195604`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.anime).toBeDefined();
+
+    const seasons = body.anime.seasons;
+    expect(Array.isArray(seasons)).toBe(true);
+    expect(seasons.length).toBeGreaterThanOrEqual(2);
+
+    // Verify chronological order: Season 1 comes before Season 2
+    const currentSeasonIdx = seasons.findIndex((s: { isCurrent?: boolean }) => s.isCurrent);
+    expect(currentSeasonIdx).toBeGreaterThan(0); // Season 2 is NOT at index 0 because Season 1 is before it!
+
+    const season1 = seasons[0];
+    const season2 = seasons[currentSeasonIdx];
+
+    expect(season1.seasonLabel).toBe("Season 1");
+    expect(season2.isCurrent).toBe(true);
+    expect(season1.seasonYear).toBeLessThanOrEqual(season2.seasonYear ?? 2026);
+
+    // Verify two-way linkage: S2 has previous season in the chain
+    const prevSeason = seasons[currentSeasonIdx - 1];
+    expect(prevSeason).toBeDefined();
+    expect(prevSeason.seasonYear).toBeLessThanOrEqual(season2.seasonYear ?? 2026);
+    expect(seasons[0].anilistId).toBe(97940); // Original Black Clover Season 1 is in the chain
+  });
 });

@@ -22,11 +22,20 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
   const [inWatchlist, setInWatchlist] = useState(false);
 
   const handleSeasonClick = async (season: RelatedSeason) => {
-    if (season.id === anime.id || season.anilistId === anime.anilistId) return;
+    if (
+      season.id === anime.id ||
+      (Boolean(season.anilistId) && season.anilistId === anime.anilistId) ||
+      (Boolean(season.malId) && season.malId === anime.malId)
+    ) {
+      return;
+    }
 
     // Check catalog cache first for instant switch
     const cached = catalog.find(
-      (a) => a.id === season.id || (season.anilistId && a.anilistId === season.anilistId)
+      (a) =>
+        a.id === season.id ||
+        (Boolean(season.anilistId) && a.anilistId === season.anilistId) ||
+        (Boolean(season.malId) && a.malId === season.malId)
     );
     if (cached) {
       onSelectAnime(cached);
@@ -48,6 +57,19 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
       console.error("Failed to load season anime:", err);
     }
   };
+
+  const seasons = anime.seasons || [];
+  const currentIndex = seasons.findIndex(
+    (s) =>
+      s.isCurrent ||
+      s.id === anime.id ||
+      (Boolean(anime.anilistId) && s.anilistId === anime.anilistId) ||
+      (Boolean(anime.malId) && s.malId === anime.malId)
+  );
+
+  const prevSeason = currentIndex > 0 ? seasons[currentIndex - 1] : null;
+  const nextSeason =
+    currentIndex >= 0 && currentIndex < seasons.length - 1 ? seasons[currentIndex + 1] : null;
 
   const related = catalog.filter(
     (a) => a.id !== anime.id && a.genres.some((g) => anime.genres.includes(g))
@@ -299,6 +321,112 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
                 Archived with full 1080p stream resolution and verified community skip markers.
               </span>
             </div>
+
+            {/* Season Navigation (Direct Previous & Next Season Linkage) */}
+            {(prevSeason || nextSeason) && (
+              <div className="border-t border-line pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-text-3 text-[11px] font-mono">Season navigation</span>
+                  {seasons.length > 2 && currentIndex >= 0 && (
+                    <span className="text-text-3 text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-2 border border-line">
+                      Season {currentIndex + 1} of {seasons.length}
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  {/* Next Season (Prominent continuation) */}
+                  {nextSeason && (
+                    <div
+                      onClick={() => handleSeasonClick(nextSeason)}
+                      className="p-2.5 rounded-poster border border-accent bg-surface-2 hover:bg-surface-2/80 transition-colors flex items-center gap-3 cursor-pointer group select-none"
+                    >
+                      <div className="w-9 h-12 aspect-[2/3] shrink-0 rounded-control overflow-hidden border border-line bg-surface relative">
+                        {nextSeason.posterUrl ? (
+                          <img
+                            src={nextSeason.posterUrl}
+                            alt={nextSeason.seasonLabel}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-text-3 text-[10px] font-mono">
+                            ★
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono text-accent font-medium flex items-center gap-1">
+                            Next season →
+                          </span>
+                          {nextSeason.seasonYear && (
+                            <span className="text-[10px] font-mono text-text-3">
+                              {nextSeason.seasonYear}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs font-semibold text-text group-hover:text-accent transition-colors truncate mt-0.5">
+                          {nextSeason.seasonLabel}
+                        </div>
+                        <div className="text-[11px] text-text-3 truncate">
+                          {nextSeason.title}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Previous Season */}
+                  {prevSeason && (
+                    <div
+                      onClick={() => handleSeasonClick(prevSeason)}
+                      className="p-2.5 rounded-poster border border-line bg-surface-2 hover:border-text-2 hover:bg-surface-2/80 transition-colors flex items-center gap-3 cursor-pointer group select-none"
+                    >
+                      <div className="w-9 h-12 aspect-[2/3] shrink-0 rounded-control overflow-hidden border border-line bg-surface relative">
+                        {prevSeason.posterUrl ? (
+                          <img
+                            src={prevSeason.posterUrl}
+                            alt={prevSeason.seasonLabel}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-text-3 text-[10px] font-mono">
+                            ★
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono text-text-3 flex items-center gap-1">
+                            ← Previous season
+                          </span>
+                          {prevSeason.seasonYear && (
+                            <span className="text-[10px] font-mono text-text-3">
+                              {prevSeason.seasonYear}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs font-semibold text-text group-hover:text-accent transition-colors truncate mt-0.5">
+                          {prevSeason.seasonLabel}
+                        </div>
+                        <div className="text-[11px] text-text-3 truncate">
+                          {prevSeason.title}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
