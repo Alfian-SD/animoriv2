@@ -1,5 +1,9 @@
 import type { Anime } from "../../shared/anime.js";
-import type { CatalogProvider } from "../providers/externalProvider.js";
+import {
+  type CatalogProvider,
+  isChineseDonghua,
+} from "../providers/externalProvider.js";
+import { enrichScrapedItemsWithAniList } from "./anilist.js";
 
 export interface RouteEntry {
   providerId: string;
@@ -29,11 +33,37 @@ export class CatalogAggregator {
     this.providers.set(provider.id, provider);
   }
 
+  public getProvider(providerId: string): CatalogProvider | undefined {
+    return this.providers.get(providerId);
+  }
+
+  public getProviders(): CatalogProvider[] {
+    return [...this.providers.values()];
+  }
+
+  public resolveRoute(idOrSlug: string): RouteEntry | null {
+    return this.sourceRouteMap.get(idOrSlug) ?? null;
+  }
+
+  public size(): number {
+    return this.sourceRouteMap.size;
+  }
+
   public registerCatalog(items: Anime[]): Anime[] {
-    const seenNormalizedTitles = new Set<string>();
+    const seenNormalizedTitles = new Map<string, Anime>();
+    const seenAniListIds = new Map<number, Anime>();
     const deduplicated: Anime[] = [];
 
     for (const anime of items) {
+      // 1. Strict Anti-Donghua gate: buang semua animasi asal China
+      if (
+        anime.countryOfOrigin === "CN" ||
+        isChineseDonghua(anime.title.romaji, anime.genres) ||
+        isChineseDonghua(anime.title.english ?? "", anime.genres)
+      ) {
+        continue;
+      }
+
       const now = Date.now();
       const entry: RouteEntry = {
         providerId: anime.sourceProvider,
@@ -42,12 +72,53 @@ export class CatalogAggregator {
       };
       this.sourceRouteMap.set(anime.id, entry);
       this.sourceRouteMap.set(anime.slug, entry);
+      if (anime.externalUrl) {
+        this.sourceRouteMap.set(anime.externalUrl, entry);
+      }
 
       const normKey = normalizeTitle(anime.title.romaji);
-      if (!seenNormalizedTitles.has(normKey)) {
-        seenNormalizedTitles.add(normKey);
-        deduplicated.push(anime);
+      let existing: Anime | undefined;
+
+      if (anime.anilistId && seenAniListIds.has(anime.anilistId)) {
+        existing = seenAniListIds.get(anime.anilistId);
+      } else if (seenNormalizedTitles.has(normKey)) {
+        existing = seenNormalizedTitles.get(normKey);
       }
+
+      if (existing) {
+        // Saling melengkapi: pertahankan metadata & artwork AniList/Curated
+        // sambil menyimpan rute provider scraper untuk episode streaming
+        if (
+          anime.sourceProvider !== "curated" &&
+          anime.sourceProvider !== "anilist"
+        ) {
+          if (!existing.externalUrl && anime.externalUrl) {
+            existing.externalUrl = anime.externalUrl;
+          }
+          this.sourceRouteMap.set(anime.id, entry);
+          this.sourceRouteMap.set(anime.slug, entry);
+        } else if (
+          existing.sourceProvider !== "curated" &&
+          existing.sourceProvider !== "anilist"
+        ) {
+          existing.anilistId = anime.anilistId;
+          existing.malId = anime.malId ?? existing.malId;
+          existing.countryOfOrigin = anime.countryOfOrigin ?? "JP";
+          existing.title = anime.title;
+          existing.synopsis = anime.synopsis;
+          existing.score = anime.score;
+          existing.genres = anime.genres;
+          existing.studio = anime.studio;
+          existing.artwork = anime.artwork;
+        }
+        continue;
+      }
+
+      seenNormalizedTitles.set(normKey, anime);
+      if (anime.anilistId) {
+        seenAniListIds.set(anime.anilistId, anime);
+      }
+      deduplicated.push(anime);
     }
 
     return deduplicated;
@@ -70,30 +141,54 @@ export class CatalogAggregator {
       externalList.map((provider) => provider.fetchCatalog())
     );
 
-    const externalItems: Anime[] = [];
+    const rawScrapedItems: Anime[] = [];
     for (const res of settled) {
-      if (res.status === "fulfilled") {
-        externalItems.push(...res.value);
+      if (res.status === "fulfilled" && Array.isArray(res.value)) {
+        rawScrapedItems.push(...res.value);
       }
     }
 
-    // Prioritaskan curatedItems terlebih dahulu agar metadata editorial tetap utuh
-    const merged = this.registerCatalog([...curatedItems, ...externalItems]);
+    // Filter awal anti-donghua pada hasil scraper
+    const nonChineseScraped = rawScrapedItems.filter(
+      (item) =>
+        item.countryOfOrigin !== "CN" &&
+        !isChineseDonghua(item.title.romaji, item.genres) &&
+        !isChineseDonghua(item.title.english ?? "", item.genres)
+    );
+
+    // Identifikasi judul scraper yang belum ada di kurasi
+    const curatedNormTitles = new Set(
+      curatedItems.map((c) => normalizeTitle(c.title.romaji))
+    );
+    const uniqueToScrapers = nonChineseScraped.filter(
+      (s) => !curatedNormTitles.has(normalizeTitle(s.title.romaji))
+    );
+
+    // Perkaya item unik dari scraper lewat AniList GraphQL
+    let enrichedScraped: Anime[] = [];
+    if (uniqueToScrapers.length > 0) {
+      try {
+        enrichedScraped = await enrichScrapedItemsWithAniList(uniqueToScrapers);
+      } catch {
+        enrichedScraped = uniqueToScrapers;
+      }
+    }
+
+    const validEnriched = enrichedScraped.filter(
+      (item) =>
+        item.countryOfOrigin !== "CN" &&
+        !isChineseDonghua(item.title.romaji, item.genres)
+    );
+
+    const merged = this.registerCatalog([
+      ...curatedItems,
+      ...nonChineseScraped,
+      ...validEnriched,
+    ]);
+
     this.cachedCatalog = merged;
     this.cacheExpiresAt = Date.now() + CatalogAggregator.CATALOG_TTL_MS;
 
     return merged;
-  }
-
-  public resolveRoute(idOrSlug: string): RouteEntry | null {
-    return this.sourceRouteMap.get(idOrSlug) ?? null;
-  }
-
-  public getProvider(providerId: string): CatalogProvider | undefined {
-    return this.providers.get(providerId);
-  }
-
-  public size(): number {
-    return this.sourceRouteMap.size;
   }
 }

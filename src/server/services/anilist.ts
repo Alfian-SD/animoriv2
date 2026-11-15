@@ -6,6 +6,7 @@ const ANILIST_ENDPOINT = "https://graphql.anilist.co";
 export interface AniListMedia {
   id: number;
   idMal?: number | null;
+  countryOfOrigin?: string | null;
   title: {
     romaji: string;
     english?: string | null;
@@ -89,6 +90,7 @@ function mapAniListMediaToAnime(m: AniListMedia, index = 0): Anime {
     malId: m.idMal ?? undefined,
     anilistId: m.id,
     sourceProvider: "anilist",
+    countryOfOrigin: m.countryOfOrigin ?? "JP",
     title: {
       romaji: m.title.romaji,
       english: m.title.english ?? undefined,
@@ -223,9 +225,10 @@ export async function fetchAniListTrending(perPage = 18): Promise<Anime[]> {
   const query = `
     query ($perPage: Int) {
       Page(page: 1, perPage: $perPage) {
-        media(type: ANIME, sort: [TRENDING_DESC, POPULARITY_DESC], isAdult: false) {
+        media(type: ANIME, countryOfOrigin: JP, sort: [TRENDING_DESC, POPULARITY_DESC], isAdult: false) {
           id
           idMal
+          countryOfOrigin
           title { romaji english native }
           description(asHtml: false)
           status
@@ -264,7 +267,9 @@ export async function fetchAniListTrending(perPage = 18): Promise<Anime[]> {
     const payload = (await response.json()) as {
       data?: { Page?: { media?: AniListMedia[] } };
     };
-    const mediaList = payload.data?.Page?.media ?? [];
+    const mediaList = (payload.data?.Page?.media ?? []).filter(
+      (m) => m.countryOfOrigin !== "CN"
+    );
     const items = mediaList.map((m, index) => mapAniListMediaToAnime(m, index));
 
     if (items.length > 0) {
@@ -290,6 +295,7 @@ export async function fetchAniListById(anilistId: number): Promise<Anime | null>
       Media(id: $id, type: ANIME, isAdult: false) {
         id
         idMal
+        countryOfOrigin
         title { romaji english native }
         description(asHtml: false)
         status
@@ -323,7 +329,7 @@ export async function fetchAniListById(anilistId: number): Promise<Anime | null>
     if (!response.ok) return null;
     const payload = (await response.json()) as { data?: { Media?: AniListMedia } };
     const media = payload.data?.Media;
-    if (!media) return null;
+    if (!media || media.countryOfOrigin === "CN") return null;
 
     const anime = mapAniListMediaToAnime(media);
     catalogQueryCache.set(cacheKey, {
@@ -460,9 +466,10 @@ export async function queryAniListCatalog(
           lastPage
           hasNextPage
         }
-        media(search: $search, genre_in: $genre_in, tag_in: $tag_in, status: $status, sort: $sort, type: ANIME, isAdult: false) {
+        media(search: $search, genre_in: $genre_in, tag_in: $tag_in, status: $status, sort: $sort, type: ANIME, countryOfOrigin: JP, isAdult: false) {
           id
           idMal
+          countryOfOrigin
           title { romaji english native }
           description(asHtml: false)
           status
@@ -483,7 +490,7 @@ export async function queryAniListCatalog(
   `;
 
   try {
-    const response = await fetch(ANILIST_ENDPOINT, {
+    let response = await fetch(ANILIST_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -505,6 +512,31 @@ export async function queryAniListCatalog(
       signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
     });
 
+    if (response.status === 429) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      response = await fetch(ANILIST_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+        },
+        body: JSON.stringify({
+          query,
+          variables: {
+            search: params.search?.trim() || undefined,
+            genre_in: standardGenres.length > 0 ? standardGenres : undefined,
+            tag_in: hasIsekai ? ["Isekai"] : undefined,
+            status: params.status?.trim() || undefined,
+            sort: sortVariable,
+            page,
+            perPage,
+          },
+        }),
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+    }
+
     if (!response.ok) {
       return {
         items: [],
@@ -521,7 +553,9 @@ export async function queryAniListCatalog(
       };
     };
 
-    const mediaList = payload.data?.Page?.media ?? [];
+    const mediaList = (payload.data?.Page?.media ?? []).filter(
+      (m) => m.countryOfOrigin !== "CN"
+    );
     const items = mediaList.map((m, index) => mapAniListMediaToAnime(m, index));
 
     const pageInfo: PageInfo = payload.data?.Page?.pageInfo ?? {
@@ -542,10 +576,169 @@ export async function queryAniListCatalog(
     catalogQueryCache.set(cacheKey, { data: result, expiresAt: now + CACHE_TTL_MS });
 
     return result;
-  } catch {
+  } catch (err) {
+    console.error("queryAniListCatalog catch:", err);
     return {
       items: [],
       pageInfo: { total: 0, currentPage: page, lastPage: 1, hasNextPage: false },
     };
   }
+}
+
+interface ScrapedEnrichmentCacheEntry {
+  enriched: Partial<Anime> | null;
+  isChinese: boolean;
+  expiresAt: number;
+}
+
+const scrapedEnrichmentCache = new Map<string, ScrapedEnrichmentCacheEntry>();
+const SCRAPED_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+export async function enrichScrapedItemsWithAniList(items: Anime[]): Promise<Anime[]> {
+  const now = Date.now();
+  const results: Anime[] = [];
+  const candidateItems = items.slice(0, 10);
+
+  for (const item of candidateItems) {
+    if (item.countryOfOrigin === "CN") continue;
+
+    const cacheKey = (item.slug || item.id).toLowerCase().trim();
+    const cached = scrapedEnrichmentCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > now) {
+      if (cached.isChinese) {
+        continue;
+      }
+      if (cached.enriched) {
+        results.push({
+          ...item,
+          ...cached.enriched,
+          artwork: {
+            ...item.artwork,
+            ...(cached.enriched.artwork ?? {}),
+          },
+        });
+        continue;
+      }
+    }
+
+    const searchQuery = item.title.romaji
+      .replace(/\s*(sub\s*indo|episode\s*\d+|batch|season\s*\d+)\b.*$/gi, "")
+      .trim();
+
+    const query = `
+      query ($search: String) {
+        Media(search: $search, type: ANIME, isAdult: false) {
+          id
+          idMal
+          countryOfOrigin
+          title { romaji english native }
+          averageScore
+          genres
+          tags { name }
+          coverImage { extraLarge large }
+          bannerImage
+          studios(isMain: true) { nodes { name } }
+        }
+      }
+    `;
+
+    try {
+      const response = await fetch(ANILIST_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+        },
+        body: JSON.stringify({ query, variables: { search: searchQuery } }),
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+
+      if (response.status === 429) {
+        results.push(item);
+        break;
+      }
+
+      if (response.ok) {
+        const payload = (await response.json()) as {
+          data?: {
+            Media?: {
+              id: number;
+              idMal?: number | null;
+              countryOfOrigin?: string | null;
+              title?: { romaji?: string; english?: string | null; native?: string | null };
+              averageScore?: number | null;
+              genres?: string[];
+              tags?: Array<{ name: string }>;
+              coverImage?: { extraLarge?: string | null; large?: string | null };
+              bannerImage?: string | null;
+              studios?: { nodes?: Array<{ name: string }> };
+            };
+          };
+        };
+
+        const media = payload.data?.Media;
+        if (media) {
+          if (media.countryOfOrigin === "CN") {
+            scrapedEnrichmentCache.set(cacheKey, {
+              enriched: null,
+              isChinese: true,
+              expiresAt: now + SCRAPED_CACHE_TTL_MS,
+            });
+            continue; // Drop Chinese Donghua
+          }
+
+          const poster = media.coverImage?.extraLarge ?? media.coverImage?.large;
+          const backdrop = media.bannerImage ?? poster;
+          const hasIsekai = media.tags?.some((t) => t.name.toLowerCase() === "isekai");
+          const genres = [...(media.genres ?? item.genres)];
+          if (hasIsekai && !genres.includes("Isekai")) {
+            genres.push("Isekai");
+          }
+
+          const enrichedData: Partial<Anime> = {
+            anilistId: media.id,
+            malId: media.idMal ?? item.malId,
+            countryOfOrigin: media.countryOfOrigin ?? "JP",
+            score: media.averageScore ? Number((media.averageScore / 10).toFixed(1)) : item.score,
+            genres,
+            studio: media.studios?.nodes?.[0]?.name ?? item.studio,
+            artwork: {
+              ...item.artwork,
+              posterUrl: poster ?? item.artwork.posterUrl,
+              backdropUrl: backdrop ?? item.artwork.backdropUrl,
+            },
+          };
+
+          scrapedEnrichmentCache.set(cacheKey, {
+            enriched: enrichedData,
+            isChinese: false,
+            expiresAt: now + SCRAPED_CACHE_TTL_MS,
+          });
+
+          results.push({
+            ...item,
+            ...enrichedData,
+            artwork: {
+              ...item.artwork,
+              ...(enrichedData.artwork ?? {}),
+            },
+          });
+          continue;
+        }
+      }
+    } catch {
+      // Network timeout: fall through
+    }
+
+    scrapedEnrichmentCache.set(cacheKey, {
+      enriched: null,
+      isChinese: false,
+      expiresAt: now + SCRAPED_CACHE_TTL_MS,
+    });
+    results.push(item);
+  }
+
+  return results;
 }

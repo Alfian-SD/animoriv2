@@ -63,6 +63,8 @@ export interface Anime {
   malId?: number;
   anilistId?: number;
   sourceProvider: string;
+  countryOfOrigin?: "JP" | "CN" | "KR" | "TW" | string;
+  externalUrl?: string;
   title: {
     romaji: string;
     english?: string;

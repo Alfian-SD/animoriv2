@@ -1,7 +1,12 @@
 import { Router, type Request, type Response } from "express";
+import type { Anime } from "../../shared/anime.js";
 import { CatalogAggregator } from "../services/aggregator.js";
 import { CURATED_ANIME_CATALOG } from "../providers/curatedProvider.js";
-import { ExternalHtmlScraperProvider } from "../providers/externalProvider.js";
+import {
+  OtakudesuProvider,
+  NimegamiProvider,
+  ExternalHtmlScraperProvider,
+} from "../providers/externalProvider.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { fetchAniSkipIntervals } from "../services/aniskip.js";
 import {
@@ -15,6 +20,17 @@ import { resolveEpisodeStreams } from "../services/streamResolver.js";
 
 export const catalogRouter = Router();
 export const aggregator = new CatalogAggregator();
+
+// Register dual scraper providers: Otakudesu & Nimegami
+const otakudesuUrl = process.env.OTAKUDESU_URL || "https://otakudesu.blog";
+if (isSafeAllowedStreamUrl(otakudesuUrl)) {
+  aggregator.registerProvider(new OtakudesuProvider(otakudesuUrl));
+}
+
+const nimegamiUrl = process.env.NIMEGAMI_URL || "https://nimegami.id";
+if (isSafeAllowedStreamUrl(nimegamiUrl)) {
+  aggregator.registerProvider(new NimegamiProvider(nimegamiUrl));
+}
 
 // Register external scraper conditionally if provided and safe
 const externalScraperUrl = process.env.EXTERNAL_SCRAPER_URL;
@@ -101,8 +117,25 @@ catalogRouter.get("/", async (req: Request, res: Response) => {
     curatedCandidates = curatedCandidates.filter((a) => a.season === season);
   }
 
-  // Merge curated and AniList results
-  const basePool = page === 1 ? [...curatedCandidates, ...anilistResult.items] : anilistResult.items;
+  // Collect external scraper items on page 1 for complementary catalog enrichment
+  let externalCandidates: Anime[] = [];
+  if (page === 1 && !search && selectedGenres.length === 0) {
+    const providers = aggregator.getProviders();
+    if (providers.length > 0) {
+      const settled = await Promise.allSettled(providers.map((p) => p.fetchCatalog()));
+      for (const res of settled) {
+        if (res.status === "fulfilled" && Array.isArray(res.value)) {
+          externalCandidates.push(...res.value);
+        }
+      }
+    }
+  }
+
+  // Merge curated, external scraper candidates, and AniList results
+  const basePool =
+    page === 1
+      ? [...curatedCandidates, ...externalCandidates, ...anilistResult.items]
+      : anilistResult.items;
   const deduplicatedItems = aggregator.registerCatalog(basePool);
   let items = [...deduplicatedItems];
 

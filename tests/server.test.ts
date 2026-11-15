@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { app } from "../src/server/index.js";
 import type { Server } from "node:http";
 
-describe("Express API Integration", () => {
+describe("Express API Integration", { timeout: 15000 }, () => {
   let server: Server;
   let baseUrl: string;
 
