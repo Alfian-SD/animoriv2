@@ -51,6 +51,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMousePosRef = useRef({ x: -1, y: -1 });
 
   const [internalServerIdx, setInternalServerIdx] = useState(0);
   const activeIndex = activeOptionIndex ?? internalServerIdx;
@@ -58,6 +59,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
@@ -72,7 +74,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   const activeOption = options[activeIndex] || options[0];
 
   // Mouse activity & 5-second auto-hide controls timer
-  const handleMouseMove = useCallback(() => {
+  const resetControlsTimer = useCallback(() => {
     setShowControls(true);
     if (controlsTimeoutRef.current) {
       clearTimeout(controlsTimeoutRef.current);
@@ -82,31 +84,78 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
     }, 5000);
   }, []);
 
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent | MouseEvent) => {
+      // Prevent synthetic mousemove events (dispatched on DOM style/pointer-events changes) from resetting timer
+      if (
+        e.clientX === lastMousePosRef.current.x &&
+        e.clientY === lastMousePosRef.current.y
+      ) {
+        return;
+      }
+      lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+      resetControlsTimer();
+    },
+    [resetControlsTimer]
+  );
+
   const handleMouseLeave = useCallback(() => {
-    if (controlsTimeoutRef.current) {
-      clearTimeout(controlsTimeoutRef.current);
-    }
-    if (isPlaying) {
-      setShowControls(false);
+    if (!document.fullscreenElement) {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+      if (isPlaying) {
+        setShowControls(false);
+      }
     }
   }, [isPlaying]);
 
   // Restart 5s hide timer when video begins playing, or keep visible when paused
   useEffect(() => {
     if (isPlaying) {
-      if (controlsTimeoutRef.current) {
-        clearTimeout(controlsTimeoutRef.current);
-      }
-      controlsTimeoutRef.current = setTimeout(() => {
-        setShowControls(false);
-      }, 5000);
+      resetControlsTimer();
     } else {
       setShowControls(true);
-      if (controlsTimeoutRef.current) {
+      if (document.fullscreenElement) {
+        resetControlsTimer();
+      } else if (controlsTimeoutRef.current) {
         clearTimeout(controlsTimeoutRef.current);
       }
     }
-  }, [isPlaying]);
+  }, [isPlaying, resetControlsTimer]);
+
+  // Global fullscreen change listener
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isFs = Boolean(
+        document.fullscreenElement ||
+          (document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement
+      );
+      setIsFullscreen(isFs);
+      resetControlsTimer();
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+    };
+  }, [resetControlsTimer]);
+
+  // Capture global mouse movement in fullscreen mode
+  useEffect(() => {
+    const onDocMouseMove = (e: MouseEvent) => {
+      if (document.fullscreenElement) {
+        handleMouseMove(e);
+      }
+    };
+
+    window.addEventListener("mousemove", onDocMouseMove);
+    return () => {
+      window.removeEventListener("mousemove", onDocMouseMove);
+    };
+  }, [handleMouseMove]);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -319,6 +368,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   const handleTogglePlay = () => {
     const video = videoRef.current;
     if (!video) return;
+    resetControlsTimer();
     if (video.paused) {
       video.play().catch(() => {});
       setIsPlaying(true);
@@ -367,6 +417,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
 
   const handleFullscreen = () => {
     if (!containerRef.current) return;
+    resetControlsTimer();
     if (!document.fullscreenElement) {
       containerRef.current.requestFullscreen().catch(() => {});
     } else {
@@ -448,9 +499,12 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
       ref={containerRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
-      className={`relative w-full aspect-video bg-[#09090B] rounded-poster overflow-hidden border border-line select-none group ${
-        !showControls && isPlaying ? "cursor-none" : ""
-      }`}
+      className={`relative bg-[#09090B] overflow-hidden select-none group fullscreen:w-full fullscreen:h-full fullscreen:rounded-none fullscreen:border-0 ${
+        isFullscreen
+          ? "w-full h-full rounded-none border-0"
+          : "w-full aspect-video rounded-poster border border-line"
+      } ${!showControls ? "cursor-none [&_*]:!cursor-none" : ""}`}
+      style={{ cursor: !showControls ? "none" : undefined }}
     >
       {/* Loading Mirrors Overlay (Condition A) */}
       {isLoadingMirrors && (
@@ -528,7 +582,9 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
           }}
           onError={handleFailover}
           playsInline
-          className="w-full h-full object-contain cursor-pointer"
+          className={`w-full h-full object-contain ${
+            showControls ? "cursor-pointer" : "!cursor-none"
+          }`}
           onClick={handleTogglePlay}
         />
       ) : (
@@ -580,7 +636,9 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
       {activeOption?.mode !== "embed" && (
         <div
           className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-bg/95 via-bg/80 to-transparent p-4 transition-opacity duration-200 z-20 ${
-            showControls ? "opacity-100" : "opacity-0 pointer-events-none"
+            showControls
+              ? "opacity-100 pointer-events-auto"
+              : "opacity-0 pointer-events-none !cursor-none [&_*]:!cursor-none"
           }`}
         >
           {/* Timeline Range */}
