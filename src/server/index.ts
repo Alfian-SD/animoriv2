@@ -36,6 +36,11 @@ app.use("/api/anime", catalogRouter);
 app.get("/api/episodes/:episodeId/skip-times", handleSkipTimes);
 app.use("/api/streams", streamRouter);
 
+// Favicon handler
+app.get("/favicon.ico", (_req: Request, res: Response) => {
+  res.status(204).end();
+});
+
 // Static file serving & SPA fallback for non-API routes (/home, /explore, /src/*, /:animeSlug)
 const clientDistPath = path.resolve(process.cwd(), "dist/client");
 const clientDistIndex = path.resolve(clientDistPath, "index.html");
