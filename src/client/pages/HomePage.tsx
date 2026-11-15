@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import type { Anime, WatchProgress } from "@shared/anime.js";
 import { Artwork } from "../ui/art.js";
+import { FlipAnimeCard } from "../ui/FlipAnimeCard.js";
 import { Button, Card } from "../ui/components.js";
 import { PlayIcon, BookmarkIcon, CheckIcon } from "../ui/icons.js";
 
@@ -181,34 +182,18 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
         </section>
       )}
 
-      {/* TRENDING (Ranked Posters 1-10) */}
+      {/* TRENDING (Ranked Posters 1-10 with 3D Flip Cards) */}
       <section className="space-y-4">
         <h2 className="font-serif text-2xl text-text">Trending</h2>
         <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-none">
           {trendingAnime.map((anime, idx) => (
-            <div
+            <FlipAnimeCard
               key={anime.id}
+              anime={anime}
+              rank={idx + 1}
               onClick={() => onSelectAnime(anime)}
-              className="w-[165px] sm:w-[185px] lg:w-[200px] shrink-0 cursor-pointer group"
-            >
-              <div className="relative aspect-[2/3] mb-2 rounded-poster overflow-hidden">
-                <Artwork anime={anime} aspect="poster" />
-                {/* Minimal Rank Stamp */}
-                <div
-                  className={`absolute top-2 left-2 text-xs font-mono px-2 py-0.5 rounded-control ${
-                    idx === 0
-                      ? "bg-accent text-[#09090B] font-semibold border border-accent"
-                      : "bg-surface/90 border border-line text-text"
-                  }`}
-                >
-                  #{idx + 1}
-                </div>
-              </div>
-              <div className="text-sm font-medium text-text group-hover:text-accent transition-colors truncate">
-                {anime.title.romaji}
-              </div>
-              <div className="text-xs text-text-3">Score {anime.score} · {anime.episodes.length} episodes</div>
-            </div>
+              className="w-[165px] sm:w-[185px] lg:w-[200px] shrink-0"
+            />
           ))}
         </div>
       </section>
@@ -250,46 +235,30 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
         </div>
       </section>
 
-      {/* FALL 2026 (Poster Row) */}
+      {/* FALL 2026 (Poster Row with 3D Flip Cards) */}
       <section className="space-y-4">
         <h2 className="font-serif text-2xl text-text">Fall 2026 season</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
           {seasonalAnime.slice(0, 6).map((anime) => (
-            <div
+            <FlipAnimeCard
               key={anime.id}
+              anime={anime}
               onClick={() => onSelectAnime(anime)}
-              className="cursor-pointer group"
-            >
-              <div className="aspect-[2/3] mb-2 rounded-poster overflow-hidden">
-                <Artwork anime={anime} aspect="poster" />
-              </div>
-              <div className="text-sm font-medium text-text truncate group-hover:text-accent transition-colors">
-                {anime.title.romaji}
-              </div>
-              <div className="text-xs text-text-3">{anime.genres.slice(0, 2).join(", ")}</div>
-            </div>
+            />
           ))}
         </div>
       </section>
 
-      {/* RECOMMENDED (Poster Row) */}
+      {/* RECOMMENDED (Poster Row with 3D Flip Cards) */}
       <section className="space-y-4">
         <h2 className="font-serif text-2xl text-text">Recommended</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
           {recommendedAnime.slice(0, 6).map((anime) => (
-            <div
+            <FlipAnimeCard
               key={anime.id}
+              anime={anime}
               onClick={() => onSelectAnime(anime)}
-              className="cursor-pointer group"
-            >
-              <div className="aspect-[2/3] mb-2 rounded-poster overflow-hidden">
-                <Artwork anime={anime} aspect="poster" />
-              </div>
-              <div className="text-sm font-medium text-text truncate group-hover:text-accent transition-colors">
-                {anime.title.romaji}
-              </div>
-              <div className="text-xs text-text-3">Score {anime.score}</div>
-            </div>
+            />
           ))}
         </div>
       </section>

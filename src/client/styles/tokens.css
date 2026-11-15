@@ -55,6 +55,46 @@ select:focus-visible,
   background: var(--surface-2);
 }
 
+/* Yoake 3D Flip Card Utilities (React Bits Architectural Adaptation) */
+.flip-card-perspective {
+  perspective: 1000px;
+}
+
+.flip-card-inner {
+  transform-style: preserve-3d;
+  transition: transform 450ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.flip-card-front,
+.flip-card-back {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.flip-card-back {
+  transform: rotateY(180deg);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .group:hover .flip-card-inner,
+  .group:focus-visible .flip-card-inner {
+    transform: rotateY(180deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flip-card-inner {
+    transition: none !important;
+    transform: none !important;
+  }
+  .group:hover .flip-card-back,
+  .group:focus-visible .flip-card-back {
+    transform: none !important;
+    opacity: 1 !important;
+    z-index: 10;
+  }
+}
+
 /* Range input styling for player timeline & volume */
 input[type="range"].yoake-range {
   -webkit-appearance: none;
