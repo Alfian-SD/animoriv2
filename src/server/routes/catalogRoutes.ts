@@ -4,7 +4,7 @@ import { CURATED_ANIME_CATALOG } from "../providers/curatedProvider.js";
 import { ExternalHtmlScraperProvider } from "../providers/externalProvider.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { fetchAniSkipIntervals } from "../services/aniskip.js";
-import { fetchAniListTrending, queryAniListCatalog } from "../services/anilist.js";
+import { fetchAniListTrending, enrichCatalogArtwork, queryAniListCatalog } from "../services/anilist.js";
 
 export const catalogRouter = Router();
 export const aggregator = new CatalogAggregator();
@@ -18,10 +18,13 @@ if (externalScraperUrl && isSafeAllowedStreamUrl(externalScraperUrl)) {
 // Initial sync with curated catalog
 aggregator.registerCatalog(CURATED_ANIME_CATALOG);
 
-// Helper to get all combined catalog items with AniList trending enrichment
+// Helper to get all combined catalog items with AniList trending enrichment and batch artwork validation
 async function getUnifiedCatalog(forceRefresh = false) {
-  const anilistItems = await fetchAniListTrending(18);
-  return aggregator.syncAllProviders([...CURATED_ANIME_CATALOG, ...anilistItems], forceRefresh);
+  const [enrichedCurated, anilistItems] = await Promise.all([
+    enrichCatalogArtwork(CURATED_ANIME_CATALOG),
+    fetchAniListTrending(18),
+  ]);
+  return aggregator.syncAllProviders([...enrichedCurated, ...anilistItems], forceRefresh);
 }
 
 // GET /api/catalog (or /api/anime)

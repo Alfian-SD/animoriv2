@@ -73,6 +73,99 @@ function buildPlayableEpisodes(animeId: string, count: number): Episode[] {
 let cachedTrending: { data: Anime[]; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+// In-memory cache for artwork enrichment (TTL 1 hour)
+const enrichedArtworkCache = new Map<
+  number,
+  { posterUrl?: string; backdropUrl?: string; expiresAt: number }
+>();
+const ARTWORK_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+export async function enrichCatalogArtwork(items: Anime[]): Promise<Anime[]> {
+  const now = Date.now();
+  const missingIds: number[] = [];
+
+  for (const item of items) {
+    if (item.anilistId) {
+      const cached = enrichedArtworkCache.get(item.anilistId);
+      if (!cached || cached.expiresAt <= now) {
+        missingIds.push(item.anilistId);
+      }
+    }
+  }
+
+  if (missingIds.length > 0) {
+    const query = `
+      query ($ids: [Int]) {
+        Page(page: 1, perPage: 50) {
+          media(id_in: $ids, type: ANIME) {
+            id
+            idMal
+            coverImage { extraLarge large }
+            bannerImage
+          }
+        }
+      }
+    `;
+
+    try {
+      const response = await fetch(ANILIST_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+        },
+        body: JSON.stringify({ query, variables: { ids: missingIds } }),
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+
+      if (response.ok) {
+        const payload = (await response.json()) as {
+          data?: {
+            Page?: {
+              media?: Array<{
+                id: number;
+                idMal?: number | null;
+                coverImage?: { extraLarge?: string | null; large?: string | null };
+                bannerImage?: string | null;
+              }>;
+            };
+          };
+        };
+
+        const mediaList = payload.data?.Page?.media ?? [];
+        for (const m of mediaList) {
+          const poster = m.coverImage?.extraLarge ?? m.coverImage?.large ?? undefined;
+          const backdrop = m.bannerImage ?? poster;
+          enrichedArtworkCache.set(m.id, {
+            posterUrl: poster,
+            backdropUrl: backdrop,
+            expiresAt: now + ARTWORK_CACHE_TTL_MS,
+          });
+        }
+      }
+    } catch {
+      // Retain existing or cached artwork gracefully if network times out
+    }
+  }
+
+  // Apply enriched artwork to items
+  return items.map((item) => {
+    if (!item.anilistId) return item;
+    const cached = enrichedArtworkCache.get(item.anilistId);
+    if (!cached || (!cached.posterUrl && !cached.backdropUrl)) return item;
+
+    return {
+      ...item,
+      artwork: {
+        ...item.artwork,
+        posterUrl: cached.posterUrl ?? item.artwork.posterUrl,
+        backdropUrl: cached.backdropUrl ?? item.artwork.backdropUrl,
+      },
+    };
+  });
+}
+
 export async function fetchAniListTrending(perPage = 18): Promise<Anime[]> {
   const now = Date.now();
   if (cachedTrending && cachedTrending.expiresAt > now) {

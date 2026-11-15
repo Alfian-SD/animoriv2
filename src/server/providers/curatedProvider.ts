@@ -57,9 +57,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "ridgelines",
       primaryHue: 195,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx154587-gHSraOSa0nBG.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx154587-qQTzQnEJJ3oB.jpg",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/154587-ivvxgm32200a.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/154587-ivXNJ23SM1xB.jpg",
     },
     episodes: makeEpisodes("frieren-beyond-journeys-end", 12),
   },
@@ -86,9 +86,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "slash",
       primaryHue: 84,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx171018-2ldjt5dvAaDou.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx171018-60q1B6GK2Ghb.jpg",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/171018-s121281212.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/171018-SpwPNAduszXl.jpg",
     },
     episodes: makeEpisodes("dandadan", 12),
   },
@@ -115,9 +115,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "sun",
       primaryHue: 140,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx161645-7Ildwpfj3I3K.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx161645-QLbzHXiYRgV2.jpg",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/161645-87542123.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/161645-oqzTZYIvviWI.jpg",
     },
     episodes: makeEpisodes("kusuriya-no-hitorigoto", 12),
   },
@@ -144,9 +144,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "waves",
       primaryHue: 45,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx153518-7124912.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx153518-IVXPDY5ph3kO.jpg",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/153518-9128391.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/153518-7uRvV7SLqmHV.jpg",
     },
     episodes: makeEpisodes("dungeon-meshi", 12),
   },
@@ -173,7 +173,7 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "slash",
       primaryHue: 220,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx113415-bbBWj4pEFseh.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx113415-LHBAeoZDIsnF.jpg",
       backdropUrl:
         "https://s4.anilist.co/file/anilistcdn/media/anime/banner/113415-jQBSkxWAAk83.jpg",
     },
@@ -202,9 +202,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "slash",
       primaryHue: 15,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx127230-FlochcFwpgrd.png",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx127230-DdP4vAdssLoz.png",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/127230-2139128.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/127230-o8IRwCGVr9KW.jpg",
     },
     episodes: makeEpisodes("chainsaw-man", 12),
   },
@@ -231,9 +231,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "waves",
       primaryHue: 170,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101922-PEn1CTDYBlWX.png",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101922-WBsBl0ClmgYL.jpg",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/101922-YfZhTBblDT4t.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/101922-33MtJGsUSxga.jpg",
     },
     episodes: makeEpisodes("demon-slayer", 12),
   },
@@ -260,9 +260,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "slash",
       primaryHue: 30,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-73IhOXpJZiMF.png",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-buvcRTBx4NSm.jpg",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/16498-8jpFfDggpHJy.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/16498-8jpFCOcDmneX.jpg",
     },
     episodes: makeEpisodes("attack-on-titan", 12),
   },
@@ -289,9 +289,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "sun",
       primaryHue: 310,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx150672-6rqZcKoxk1kr.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx150672-WqmmwZ4nMzAy.png",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/150672-3y1n3w7q8d.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/150672-ISwoA0eS722H.jpg",
     },
     episodes: makeEpisodes("oshi-no-ko", 12),
   },
@@ -318,9 +318,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "slash",
       primaryHue: 250,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151807-m1g53XxS4T8y.png",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151807-it355ZgzquUd.png",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/151807-6rXfK7eS4G5.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/151807-37yfQA3ym8PA.jpg",
     },
     episodes: makeEpisodes("solo-leveling", 12),
   },
@@ -347,9 +347,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "waves",
       primaryHue: 340,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx130003-5A5nW1p4w9fN.png",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx130003-HTDmeL4RGeJ4.png",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/130003-8xYz3a.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/130003-5F90a7BtsPQN.jpg",
     },
     episodes: makeEpisodes("bocchi-the-rock", 12),
   },
@@ -376,9 +376,9 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
       motif: "sun",
       primaryHue: 120,
       posterUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx140960-YrkSDpLboGQe.png",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx140960-Kb6R5nYQfjmP.jpg",
       backdropUrl:
-        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/140960-nt4i84.jpg",
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/140960-Z7xSvkRxHKfj.jpg",
     },
     episodes: makeEpisodes("spy-x-family", 12),
   },
