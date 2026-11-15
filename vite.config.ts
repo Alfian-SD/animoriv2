@@ -4,6 +4,9 @@ import path from "node:path";
 
 export default defineConfig({
   root: "src/client",
+  css: {
+    postcss: path.resolve(__dirname),
+  },
   plugins: [react()],
   resolve: {
     alias: {
