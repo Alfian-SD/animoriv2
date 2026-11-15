@@ -1,24 +1,35 @@
 import { Router, type Request, type Response } from "express";
 import { CatalogAggregator } from "../services/aggregator.js";
 import { CURATED_ANIME_CATALOG } from "../providers/curatedProvider.js";
+import { ExternalHtmlScraperProvider } from "../providers/externalProvider.js";
+import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { fetchAniSkipIntervals } from "../services/aniskip.js";
 import { queryAniListCatalog } from "../services/anilist.js";
 
 export const catalogRouter = Router();
 export const aggregator = new CatalogAggregator();
 
-// Register initial curated catalog
+// Register external scraper conditionally if provided and safe
+const externalScraperUrl = process.env.EXTERNAL_SCRAPER_URL;
+if (externalScraperUrl && isSafeAllowedStreamUrl(externalScraperUrl)) {
+  aggregator.registerProvider(new ExternalHtmlScraperProvider("external", externalScraperUrl));
+}
+
+// Initial sync with curated catalog
 aggregator.registerCatalog(CURATED_ANIME_CATALOG);
 
-// GET /api/catalog
+// GET /api/catalog (or /api/anime)
 catalogRouter.get("/", async (req: Request, res: Response) => {
   const search = typeof req.query.search === "string" ? req.query.search.toLowerCase().trim() : "";
   const genre = typeof req.query.genre === "string" ? req.query.genre.trim() : "";
   const status = typeof req.query.status === "string" ? req.query.status.toUpperCase().trim() : "";
   const season = typeof req.query.season === "string" ? req.query.season.toUpperCase().trim() : "";
   const sort = typeof req.query.sort === "string" ? req.query.sort : "score";
+  const forceRefresh = req.query.refresh === "true";
 
-  let items = [...CURATED_ANIME_CATALOG];
+  // Sync multi-source providers
+  const allItems = await aggregator.syncAllProviders(CURATED_ANIME_CATALOG, forceRefresh);
+  let items = [...allItems];
 
   if (search) {
     items = items.filter(
@@ -69,30 +80,13 @@ catalogRouter.get("/search-anilist", async (req: Request, res: Response) => {
   });
 });
 
-// GET /api/catalog/:idOrSlug
-catalogRouter.get("/:idOrSlug", (req: Request, res: Response) => {
-  const rawId = req.params.idOrSlug;
-  const idOrSlug = (Array.isArray(rawId) ? rawId[0] : rawId) ?? "";
-  const route = aggregator.resolveRoute(idOrSlug);
-
-  const found = CURATED_ANIME_CATALOG.find(
-    (a) => a.id === idOrSlug || a.slug === idOrSlug || (route && a.id === route.animeId)
-  );
-
-  if (!found) {
-    res.status(404).json({ ok: false, error: "Anime not found" });
-    return;
-  }
-
-  res.json({ ok: true, anime: found });
-});
-
 // GET /api/catalog/episodes/:episodeId/skip-times
 catalogRouter.get("/episodes/:episodeId/skip-times", async (req: Request, res: Response) => {
   const rawEpisodeId = req.params.episodeId;
   const episodeId = (Array.isArray(rawEpisodeId) ? rawEpisodeId[0] : rawEpisodeId) ?? "";
 
-  let targetAnime = CURATED_ANIME_CATALOG.find((a) =>
+  const allItems = await aggregator.syncAllProviders(CURATED_ANIME_CATALOG);
+  const targetAnime = allItems.find((a) =>
     a.episodes.some((ep) => ep.id === episodeId)
   );
 
@@ -112,4 +106,78 @@ catalogRouter.get("/episodes/:episodeId/skip-times", async (req: Request, res: R
     episodeNumber: episode.number,
     skipIntervals,
   });
+});
+
+// GET /api/catalog/:idOrSlug/episodes/:episodeId/mirrors
+catalogRouter.get("/:idOrSlug/episodes/:episodeId/mirrors", async (req: Request, res: Response) => {
+  const rawId = req.params.idOrSlug;
+  const rawEpisodeId = req.params.episodeId;
+  const idOrSlug = (Array.isArray(rawId) ? rawId[0] : rawId) ?? "";
+  const episodeId = (Array.isArray(rawEpisodeId) ? rawEpisodeId[0] : rawEpisodeId) ?? "";
+
+  const route = aggregator.resolveRoute(idOrSlug);
+  const allItems = await aggregator.syncAllProviders(CURATED_ANIME_CATALOG);
+
+  const anime = allItems.find(
+    (a) => a.id === idOrSlug || a.slug === idOrSlug || (route && a.id === route.animeId)
+  );
+
+  if (!anime) {
+    res.status(404).json({ ok: false, error: "Anime not found" });
+    return;
+  }
+
+  const episode = anime.episodes.find((ep) => ep.id === episodeId || String(ep.number) === episodeId);
+  if (!episode) {
+    res.status(404).json({ ok: false, error: "Episode not found" });
+    return;
+  }
+
+  let mirrors = episode.playbackOptions;
+
+  // Resolve external mirrors dynamically if applicable
+  if (anime.sourceProvider !== "curated") {
+    const provider = aggregator.getProvider(anime.sourceProvider);
+    if (provider) {
+      const episodeUrl =
+        episode.playbackOptions[0]?.streamUrl ||
+        (process.env.EXTERNAL_SCRAPER_URL
+          ? `${process.env.EXTERNAL_SCRAPER_URL.replace(/\/+$/, "")}/${anime.slug}-episode-${episode.number}/`
+          : "");
+
+      if (episodeUrl && isSafeAllowedStreamUrl(episodeUrl)) {
+        const dynamicMirrors = await provider.resolveEpisodeMirrors(episodeUrl);
+        if (dynamicMirrors.length > 0) {
+          mirrors = dynamicMirrors;
+        }
+      }
+    }
+  }
+
+  res.json({
+    ok: true,
+    animeId: anime.id,
+    episodeId: episode.id,
+    episodeNumber: episode.number,
+    mirrors,
+  });
+});
+
+// GET /api/catalog/:idOrSlug (or /api/anime/:idOrSlug)
+catalogRouter.get("/:idOrSlug", async (req: Request, res: Response) => {
+  const rawId = req.params.idOrSlug;
+  const idOrSlug = (Array.isArray(rawId) ? rawId[0] : rawId) ?? "";
+  const route = aggregator.resolveRoute(idOrSlug);
+
+  const allItems = await aggregator.syncAllProviders(CURATED_ANIME_CATALOG);
+  const found = allItems.find(
+    (a) => a.id === idOrSlug || a.slug === idOrSlug || (route && a.id === route.animeId)
+  );
+
+  if (!found) {
+    res.status(404).json({ ok: false, error: "Anime not found" });
+    return;
+  }
+
+  res.json({ ok: true, anime: found });
 });

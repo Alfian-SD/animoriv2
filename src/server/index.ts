@@ -1,5 +1,7 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
+import path from "node:path";
+import fs from "node:fs";
 import { SERVER_CONFIG } from "./config.js";
 import { catalogRouter } from "./routes/catalogRoutes.js";
 import { streamRouter } from "./routes/streamRoutes.js";
@@ -28,9 +30,24 @@ app.get("/api/health", (_req: Request, res: Response) => {
   });
 });
 
-// Mount Routes
+// Mount API Routes
 app.use("/api/catalog", catalogRouter);
+app.use("/api/anime", catalogRouter);
 app.use("/api/streams", streamRouter);
+
+// Production static file serving & SPA fallback
+const clientDistPath = path.resolve(process.cwd(), "dist/client");
+if (process.env.NODE_ENV === "production" && fs.existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath));
+
+  app.get("*", (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith("/api/")) {
+      next();
+      return;
+    }
+    res.sendFile(path.join(clientDistPath, "index.html"));
+  });
+}
 
 // 404 Handler
 app.use((_req: Request, res: Response) => {

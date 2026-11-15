@@ -46,6 +46,54 @@ function resolveUpstreamReferer(targetUrl: string): string {
   return "https://desustream.net/";
 }
 
+// GET /api/streams/embed-proxy
+streamRouter.get("/embed-proxy", async (req: Request, res: Response) => {
+  const targetUrl = typeof req.query.url === "string" ? req.query.url : "";
+
+  if (!isSafeAllowedStreamUrl(targetUrl)) {
+    res.status(400).json({ error: "Invalid or forbidden embed URL" });
+    return;
+  }
+
+  try {
+    const upstreamRes = await fetch(targetUrl, {
+      headers: {
+        "User-Agent": SERVER_CONFIG.chromeUserAgent,
+        Referer: resolveUpstreamReferer(targetUrl),
+      },
+      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+    });
+
+    if (!upstreamRes.ok) {
+      res.status(502).json({ error: `Upstream embed responded with ${upstreamRes.status}` });
+      return;
+    }
+
+    let html = await upstreamRes.text();
+    const parsedUrl = new URL(targetUrl);
+    const baseTag = `<base href="${parsedUrl.origin}/">`;
+
+    if (!html.includes("<base ") && !html.includes("<base>")) {
+      if (/<head[^>]*>/i.test(html)) {
+        html = html.replace(/(<head[^>]*>)/i, `$1\n  ${baseTag}`);
+      } else {
+        html = `${baseTag}\n${html}`;
+      }
+    }
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "no-store");
+    // Explicitly do not forward X-Frame-Options or Content-Security-Policy to permit iframe embedding
+    res.status(200).send(html);
+  } catch (err) {
+    res.status(502).json({
+      error: "Embed proxy failed to retrieve content",
+      detail: err instanceof Error ? err.message : "Unknown error",
+    });
+  }
+});
+
 streamRouter.get("/:providerId/:streamId", async (req: Request, res: Response) => {
   const rawProviderId = req.params.providerId;
   const rawStreamId = req.params.streamId;
