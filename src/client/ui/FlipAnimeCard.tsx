@@ -73,7 +73,7 @@ export const FlipAnimeCard: React.FC<FlipAnimeCardProps> = ({
                 className={`absolute top-2 left-2 text-xs font-mono px-2 py-0.5 rounded-control ${
                   rank === 1
                     ? "bg-accent text-[#09090B] font-semibold border border-accent"
-                    : "bg-surface/90 border border-line text-text"
+                    : "bg-[#09090B] border border-line text-text font-medium"
                 }`}
               >
                 #{rank}

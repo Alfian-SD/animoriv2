@@ -967,7 +967,12 @@ export function cleanBaseTitle(title = ""): string {
     .trim();
 }
 
-export function formatSeasonLabel(rawTitle: string, index: number, total: number): string {
+export function formatSeasonLabel(
+  rawTitle: string,
+  index: number,
+  total: number,
+  format?: string | null
+): string {
   const lower = rawTitle.toLowerCase();
   if (lower.includes("the final season") || lower.includes("final season")) {
     if (lower.includes("part 3") || lower.includes("kanketsu-hen")) return "Final Season Part 3";
@@ -1003,6 +1008,7 @@ export function formatSeasonLabel(rawTitle: string, index: number, total: number
     }
   }
   if (
+    format === "MOVIE" ||
     lower.includes("movie") ||
     lower.includes("the movie") ||
     lower.includes("gekijouban") ||
@@ -1164,6 +1170,7 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
       {
         id: number;
         title: string;
+        format?: string | null;
         seasonYear?: number;
         episodesCount?: number;
         posterUrl?: string;
@@ -1174,6 +1181,7 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
     candidateMap.set(targetMedia.id, {
       id: targetMedia.id,
       title: targetMedia.title?.romaji || targetMedia.title?.english || anime.title.romaji,
+      format: targetMedia.format,
       seasonYear: targetMedia.seasonYear ?? anime.seasonYear,
       episodesCount: targetMedia.episodes ?? anime.episodes.length,
       posterUrl:
@@ -1212,6 +1220,7 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
         candidateMap.set(node.id, {
           id: node.id,
           title: node.title?.romaji || node.title?.english || `Season ${candidateMap.size + 1}`,
+          format: node.format,
           seasonYear: node.seasonYear ?? undefined,
           episodesCount: node.episodes ?? undefined,
           posterUrl: node.coverImage?.extraLarge ?? node.coverImage?.large ?? undefined,
@@ -1234,6 +1243,7 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
         candidateMap.set(m.id, {
           id: m.id,
           title: m.title?.romaji || m.title?.english || "",
+          format: m.format,
           seasonYear: m.seasonYear ?? undefined,
           episodesCount: m.episodes ?? undefined,
           posterUrl: m.coverImage?.extraLarge ?? m.coverImage?.large ?? undefined,
@@ -1258,7 +1268,7 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
         id: internalId,
         anilistId: c.id,
         title: c.title,
-        seasonLabel: formatSeasonLabel(c.title, index, total),
+        seasonLabel: formatSeasonLabel(c.title, index, total, c.format),
         seasonYear: c.seasonYear,
         episodesCount: c.episodesCount,
         posterUrl: c.posterUrl,

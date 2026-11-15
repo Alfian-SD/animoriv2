@@ -4,12 +4,23 @@ import { Artwork } from "../ui/art.js";
 import { FlipAnimeCard } from "../ui/FlipAnimeCard.js";
 import { Button, Card } from "../ui/components.js";
 import { PlayIcon, BookmarkIcon, CheckIcon } from "../ui/icons.js";
+import { HomeLoadingSkeleton } from "../ui/HomeLoadingSkeleton.js";
 
 interface HomePageProps {
   catalog: Anime[];
   onSelectAnime: (anime: Anime) => void;
   onWatchEpisode: (anime: Anime, epNumber: number) => void;
 }
+
+interface HomeData {
+  trending: Anime[];
+  recentlyUpdated: Anime[];
+  currentSeason: Anime[];
+}
+
+// In-memory module-level cache (TTL 5 minutes) to eliminate flash of stale content
+let cachedHomeData: { data: HomeData; expiresAt: number } | null = null;
+const CLIENT_HOME_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const PROGRESS_STORAGE_KEY = "aiku.watch-progress.v1";
 
@@ -18,30 +29,52 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
   const [isPaused, setIsPaused] = useState(false);
   const [continueWatching, setContinueWatching] = useState<Array<{ anime: Anime; progress: WatchProgress }>>([]);
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
-  const [homeData, setHomeData] = useState<{
-    trending: Anime[];
-    recentlyUpdated: Anime[];
-    currentSeason: Anime[];
-  } | null>(null);
+
+  // Check if cache is fresh on initial mount
+  const initialData =
+    cachedHomeData && cachedHomeData.expiresAt > Date.now() ? cachedHomeData.data : null;
+
+  const [homeData, setHomeData] = useState<HomeData | null>(initialData);
+  const [isLoadingHome, setIsLoadingHome] = useState<boolean>(!initialData);
 
   // Fetch real-time home highlights from AniList + Scrapers
   useEffect(() => {
     let isMounted = true;
+
+    // If cache is fresh, skip re-fetching to guarantee instant render
+    if (cachedHomeData && cachedHomeData.expiresAt > Date.now()) {
+      setHomeData(cachedHomeData.data);
+      setIsLoadingHome(false);
+      return;
+    }
+
     async function loadHome() {
       try {
         const res = await fetch("/api/catalog/home");
         if (res.ok) {
           const json = await res.json();
           if (isMounted && json.ok) {
-            setHomeData({
+            const data: HomeData = {
               trending: json.trending || [],
               recentlyUpdated: json.recentlyUpdated || [],
               currentSeason: json.currentSeason || [],
-            });
+            };
+            cachedHomeData = {
+              data,
+              expiresAt: Date.now() + CLIENT_HOME_CACHE_TTL_MS,
+            };
+            setHomeData(data);
+            setIsLoadingHome(false);
+            return;
           }
         }
       } catch (err) {
-        console.warn("Could not load /api/catalog/home:", err);
+        console.warn("Could not load /api/catalog/home, using fallback:", err);
+      }
+
+      // Offline / network failure fallback
+      if (isMounted) {
+        setIsLoadingHome(false);
       }
     }
     loadHome();
@@ -49,6 +82,11 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
       isMounted = false;
     };
   }, []);
+
+  // During cold-load, render Yoake Loading Skeleton to prevent flash of stale content
+  if (isLoadingHome && !homeData) {
+    return <HomeLoadingSkeleton />;
+  }
 
   const trendingAnime =
     homeData?.trending && homeData.trending.length > 0

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import type { Anime, RelatedSeason } from "@shared/anime.js";
 import { Artwork } from "../ui/art.js";
 import { Button } from "../ui/components.js";
@@ -20,12 +20,60 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
   onBack,
 }) => {
   const [inWatchlist, setInWatchlist] = useState(false);
+  const [currentAnime, setCurrentAnime] = useState<Anime>(anime);
+  const [isLoadingSeasons, setIsLoadingSeasons] = useState<boolean>(
+    !anime.seasons || anime.seasons.length === 0
+  );
+
+  // Synchronize local state whenever prop changes
+  useEffect(() => {
+    setCurrentAnime(anime);
+    setIsLoadingSeasons(!anime.seasons || anime.seasons.length === 0);
+  }, [anime]);
+
+  // Fetch full details (including seasons and multi-season franchise relations)
+  useEffect(() => {
+    if (anime.seasons && anime.seasons.length > 0) {
+      setIsLoadingSeasons(false);
+      return;
+    }
+
+    let isMounted = true;
+    async function loadFullDetails() {
+      try {
+        const res = await fetch(`/api/anime/${anime.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.ok && data.anime) {
+            setCurrentAnime((prev) => ({
+              ...prev,
+              ...data.anime,
+              seasons: data.anime.seasons || prev.seasons,
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load anime seasons:", err);
+      } finally {
+        if (isMounted) {
+          setIsLoadingSeasons(false);
+        }
+      }
+    }
+
+    loadFullDetails();
+    return () => {
+      isMounted = false;
+    };
+  }, [anime.id]);
+
+  const activeAnime = currentAnime;
 
   const handleSeasonClick = async (season: RelatedSeason) => {
     if (
-      season.id === anime.id ||
-      (Boolean(season.anilistId) && season.anilistId === anime.anilistId) ||
-      (Boolean(season.malId) && season.malId === anime.malId)
+      season.id === activeAnime.id ||
+      (Boolean(season.anilistId) && season.anilistId === activeAnime.anilistId) ||
+      (Boolean(season.malId) && season.malId === activeAnime.malId)
     ) {
       return;
     }
@@ -37,13 +85,13 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
         (Boolean(season.anilistId) && a.anilistId === season.anilistId) ||
         (Boolean(season.malId) && a.malId === season.malId)
     );
-    if (cached) {
+    if (cached && cached.seasons && cached.seasons.length > 0) {
       onSelectAnime(cached);
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
 
-    // Fetch details from server
+    // Fetch full details from server
     try {
       const res = await fetch(`/api/anime/${season.id}`);
       if (res.ok) {
@@ -51,20 +99,26 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
         if (data.ok && data.anime) {
           onSelectAnime(data.anime);
           window.scrollTo({ top: 0, behavior: "smooth" });
+          return;
         }
       }
     } catch (err) {
       console.error("Failed to load season anime:", err);
     }
+
+    if (cached) {
+      onSelectAnime(cached);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   };
 
-  const seasons = anime.seasons || [];
+  const seasons = activeAnime.seasons || [];
   const currentIndex = seasons.findIndex(
     (s) =>
       s.isCurrent ||
-      s.id === anime.id ||
-      (Boolean(anime.anilistId) && s.anilistId === anime.anilistId) ||
-      (Boolean(anime.malId) && s.malId === anime.malId)
+      s.id === activeAnime.id ||
+      (Boolean(activeAnime.anilistId) && s.anilistId === activeAnime.anilistId) ||
+      (Boolean(activeAnime.malId) && s.malId === activeAnime.malId)
   );
 
   const prevSeason = currentIndex > 0 ? seasons[currentIndex - 1] : null;
@@ -72,7 +126,7 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
     currentIndex >= 0 && currentIndex < seasons.length - 1 ? seasons[currentIndex + 1] : null;
 
   const related = catalog.filter(
-    (a) => a.id !== anime.id && a.genres.some((g) => anime.genres.includes(g))
+    (a) => a.id !== activeAnime.id && a.genres.some((g) => activeAnime.genres.includes(g))
   ).slice(0, 6);
 
   return (
@@ -89,7 +143,7 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
       <div className="relative rounded-poster overflow-hidden border border-line bg-surface">
         {/* Backdrop Art Surface */}
         <div className="h-64 md:h-80 w-full relative overflow-hidden opacity-60">
-          <Artwork anime={anime} aspect="backdrop" className="w-full h-full" />
+          <Artwork anime={activeAnime} aspect="backdrop" className="w-full h-full" />
           <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/60 to-transparent" />
         </div>
 
@@ -97,33 +151,33 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
         <div className="p-6 md:p-8 -mt-24 relative z-10 grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
           {/* Poster */}
           <div className="md:col-span-3 aspect-[2/3] w-48 md:w-full rounded-poster overflow-hidden border border-line shadow-2xl">
-            <Artwork anime={anime} aspect="poster" />
+            <Artwork anime={activeAnime} aspect="poster" />
           </div>
 
           {/* Details */}
           <div className="md:col-span-9 space-y-4">
             <div className="space-y-1">
               <h1 className="font-serif text-3xl md:text-5xl text-text leading-tight">
-                {anime.title.romaji}
+                {activeAnime.title.romaji}
               </h1>
-              {anime.title.native && (
-                <div className="text-text-3 text-sm font-sans">{anime.title.native}</div>
+              {activeAnime.title.native && (
+                <div className="text-text-3 text-sm font-sans">{activeAnime.title.native}</div>
               )}
             </div>
 
             <div className="flex flex-wrap items-center gap-3 text-xs text-text-3 font-mono">
-              <span className="text-accent font-semibold">Score {anime.score}</span>
+              <span className="text-accent font-semibold">Score {activeAnime.score}</span>
               <span>·</span>
-              <span>{anime.status === "RELEASING" ? "Airing" : "Completed"}</span>
+              <span>{activeAnime.status === "RELEASING" ? "Airing" : "Completed"}</span>
               <span>·</span>
-              <span>{anime.seasonYear}</span>
+              <span>{activeAnime.seasonYear}</span>
               <span>·</span>
-              <span>{anime.studio}</span>
+              <span>{activeAnime.studio}</span>
             </div>
 
             {/* Genres */}
             <div className="flex flex-wrap gap-1.5 pt-1">
-              {anime.genres.map((g) => (
+              {activeAnime.genres.map((g) => (
                 <span
                   key={g}
                   className="px-2.5 py-0.5 rounded-full text-xs bg-surface-2 text-text-2 border border-line"
@@ -134,7 +188,7 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
             </div>
 
             <p className="text-text-2 text-sm md:text-base leading-relaxed pt-2 max-w-3xl">
-              {anime.synopsis}
+              {activeAnime.synopsis}
             </p>
 
             {/* Action Buttons */}
@@ -142,7 +196,7 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
               <Button
                 variant="primary"
                 size="lg"
-                onClick={() => onWatchEpisode(anime, 1)}
+                onClick={() => onWatchEpisode(activeAnime, 1)}
               >
                 <PlayIcon size={16} />
                 Watch episode 1
@@ -175,22 +229,22 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
         {/* Main Left Column (Col 8) */}
         <div className="md:col-span-8 space-y-8">
           {/* Seasons Section (Above Episodes) */}
-          {anime.seasons && anime.seasons.length > 1 && (
+          {activeAnime.seasons && activeAnime.seasons.length > 1 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between border-b border-line pb-3">
                 <h2 className="font-serif text-2xl text-text">Seasons</h2>
                 <span className="text-xs text-text-3 font-mono">
-                  {anime.seasons.length} seasons available
+                  {activeAnime.seasons.length} seasons available
                 </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {anime.seasons.map((season) => {
+                {activeAnime.seasons.map((season) => {
                   const isActive =
                     season.isCurrent ||
-                    season.id === anime.id ||
-                    (Boolean(anime.anilistId) && season.anilistId === anime.anilistId) ||
-                    (Boolean(anime.malId) && season.malId === anime.malId);
+                    season.id === activeAnime.id ||
+                    (Boolean(activeAnime.anilistId) && season.anilistId === activeAnime.anilistId) ||
+                    (Boolean(activeAnime.malId) && season.malId === activeAnime.malId);
 
                   return (
                     <div
@@ -254,14 +308,14 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-line pb-3">
               <h2 className="font-serif text-2xl text-text">Episodes</h2>
-              <span className="text-xs text-text-3">{anime.episodes.length} episodes released</span>
+              <span className="text-xs text-text-3">{activeAnime.episodes.length} episodes released</span>
             </div>
 
           <div className="space-y-2">
-            {anime.episodes.map((ep) => (
+            {activeAnime.episodes.map((ep) => (
               <div
                 key={ep.id}
-                onClick={() => onWatchEpisode(anime, ep.number)}
+                onClick={() => onWatchEpisode(activeAnime, ep.number)}
                 className="bg-surface border border-line p-3.5 rounded-poster flex items-center justify-between gap-4 cursor-pointer hover:border-text-3 transition-colors group"
               >
                 <div className="flex items-center gap-3.5 min-w-0">
@@ -295,18 +349,18 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
           <div className="space-y-3 text-xs">
             <div>
               <span className="text-text-3 block">Animation studio</span>
-              <span className="text-text font-medium">{anime.studio}</span>
+              <span className="text-text font-medium">{activeAnime.studio}</span>
             </div>
 
             <div>
               <span className="text-text-3 block">Broadcast season</span>
-              <span className="text-text font-medium">{anime.season} {anime.seasonYear}</span>
+              <span className="text-text font-medium">{activeAnime.season} {activeAnime.seasonYear}</span>
             </div>
 
             <div>
               <span className="text-text-3 block">Status</span>
               <span className="text-text font-medium">
-                {anime.status === "RELEASING" ? "Currently airing" : "Completed broadcast"}
+                {activeAnime.status === "RELEASING" ? "Currently airing" : "Completed broadcast"}
               </span>
             </div>
 
@@ -323,7 +377,18 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
             </div>
 
             {/* Season Navigation (Direct Previous & Next Season Linkage) */}
-            {(prevSeason || nextSeason) && (
+            {isLoadingSeasons ? (
+              <div className="border-t border-line pt-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-text-3 text-[11px] font-mono">Season navigation</span>
+                  <span className="text-text-3 text-[10px] font-mono flex items-center gap-1.5 text-accent">
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+                    Checking...
+                  </span>
+                </div>
+                <div className="h-14 rounded-poster bg-surface-2/60 border border-line animate-pulse" />
+              </div>
+            ) : (prevSeason || nextSeason) ? (
               <div className="border-t border-line pt-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-text-3 text-[11px] font-mono">Season navigation</span>
@@ -362,7 +427,7 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-mono text-accent font-medium flex items-center gap-1">
-                            Next season →
+                            {nextSeason.seasonLabel === "Movie" ? "Next movie →" : "Next season →"}
                           </span>
                           {nextSeason.seasonYear && (
                             <span className="text-[10px] font-mono text-text-3">
@@ -407,7 +472,7 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-mono text-text-3 flex items-center gap-1">
-                            ← Previous season
+                            {prevSeason.seasonLabel === "Movie" ? "← Previous movie" : "← Previous season"}
                           </span>
                           {prevSeason.seasonYear && (
                             <span className="text-[10px] font-mono text-text-3">
@@ -426,7 +491,7 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
                   )}
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
