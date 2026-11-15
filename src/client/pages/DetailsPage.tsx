@@ -167,11 +167,12 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
                   const isActive =
                     season.isCurrent ||
                     season.id === anime.id ||
-                    (Boolean(anime.anilistId) && season.anilistId === anime.anilistId);
+                    (Boolean(anime.anilistId) && season.anilistId === anime.anilistId) ||
+                    (Boolean(anime.malId) && season.malId === anime.malId);
 
                   return (
                     <div
-                      key={season.id || season.anilistId}
+                      key={season.id || (season.malId ? `mal-${season.malId}` : season.anilistId)}
                       onClick={() => handleSeasonClick(season)}
                       className={`p-2.5 rounded-poster border transition-colors flex items-center gap-3 cursor-pointer group bg-surface select-none ${
                         isActive

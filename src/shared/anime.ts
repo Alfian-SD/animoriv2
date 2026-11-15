@@ -28,8 +28,9 @@ export interface PageInfo {
 }
 
 export interface RelatedSeason {
-  id: string; // ID internal, misal ID curated jika cocok atau "al-{anilistId}"
-  anilistId: number;
+  id: string; // ID internal, misal ID curated jika cocok, "al-{anilistId}", atau "mal-{malId}"
+  anilistId?: number;
+  malId?: number;
   title: string;
   seasonLabel: string; // Format natural, misal "Season 1", "Season 2", "Final Season"
   seasonYear?: number;

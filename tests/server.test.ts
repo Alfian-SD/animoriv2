@@ -177,4 +177,141 @@ describe("Express API Integration", { timeout: 15000 }, () => {
       expect(s.seasonLabel.length).toBeGreaterThan(0);
     }
   });
+
+  it("fails over to Jikan provider when AniList returns HTTP 429 / error for catalog and anime details with seasons", async () => {
+    const originalFetch = globalThis.fetch;
+
+    const mockJikanAnime = {
+      mal_id: 99991,
+      title: "Jikan Fallback Test Adventure",
+      title_english: "Jikan Fallback Test Adventure",
+      title_japanese: "ジカン・フォールバック",
+      type: "TV",
+      status: "Finished Airing",
+      year: 2024,
+      score: 8.7,
+      genres: [
+        { mal_id: 1, type: "anime", name: "Action" },
+        { mal_id: 2, type: "anime", name: "Fantasy" },
+      ],
+      studios: [{ mal_id: 1, type: "anime", name: "Bones" }],
+      images: {
+        webp: { large_image_url: "https://example.com/poster.webp" },
+        jpg: { large_image_url: "https://example.com/poster.jpg" },
+      },
+      trailer: {
+        images: { maximum_image_url: "https://example.com/backdrop.jpg" },
+      },
+      synopsis: "A test anime returned by Jikan fallback provider when AniList is down.",
+      episodes: 12,
+    };
+
+    const mockJikanRelations = [
+      {
+        relation: "Prequel",
+        entry: [
+          {
+            mal_id: 99990,
+            type: "anime",
+            name: "Jikan Fallback Test Season 1",
+            url: "https://myanimelist.net/anime/99990",
+          },
+        ],
+      },
+      {
+        relation: "Sequel",
+        entry: [
+          {
+            mal_id: 99992,
+            type: "anime",
+            name: "Jikan Fallback Test Season 3",
+            url: "https://myanimelist.net/anime/99992",
+          },
+        ],
+      },
+    ];
+
+    try {
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+        // Simulate AniList HTTP 429 Too Many Requests
+        if (urlStr.includes("graphql.anilist.co")) {
+          return new Response(
+            JSON.stringify({ errors: [{ message: "Too Many Requests", status: 429 }] }),
+            { status: 429, statusText: "Too Many Requests", headers: { "Content-Type": "application/json" } }
+          );
+        }
+
+        // Mock Jikan API catalog endpoint
+        if (urlStr.includes("api.jikan.moe/v4/anime?") || urlStr.includes("api.jikan.moe/v4/top/anime")) {
+          return new Response(
+            JSON.stringify({
+              pagination: {
+                last_visible_page: 1,
+                has_next_page: false,
+                current_page: 1,
+                items: { count: 1, total: 1, per_page: 25 },
+              },
+              data: [mockJikanAnime],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+
+        // Mock Jikan API single item full details endpoint
+        if (urlStr.includes("api.jikan.moe/v4/anime/99991/full")) {
+          return new Response(
+            JSON.stringify({ data: mockJikanAnime }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+
+        // Mock Jikan API relations endpoint
+        if (urlStr.includes("api.jikan.moe/v4/anime/99991/relations")) {
+          return new Response(
+            JSON.stringify({ data: mockJikanRelations }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+
+        // Pass-through local server and other requests
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      // 1. Verify GET /api/catalog falls back to Jikan when AniList returns 429
+      const catalogRes = await fetch(`${baseUrl}/api/catalog?search=fallback_unique_query`);
+      expect(catalogRes.status).toBe(200);
+      const catalogBody = await catalogRes.json();
+      expect(catalogBody.ok).toBe(true);
+      expect(Array.isArray(catalogBody.items)).toBe(true);
+      const jikanItem = catalogBody.items.find(
+        (it: { id: string; title: { romaji: string } }) =>
+          it.id === "mal-99991" || it.title.romaji.includes("Jikan Fallback")
+      );
+      expect(jikanItem).toBeDefined();
+      expect(jikanItem.sourceProvider).toBe("jikan");
+
+      // 2. Verify GET /api/anime/:id with prefix mal-{malId} resolves via Jikan
+      const detailRes = await fetch(`${baseUrl}/api/anime/mal-99991`);
+      expect(detailRes.status).toBe(200);
+      const detailBody = await detailRes.json();
+      expect(detailBody.ok).toBe(true);
+      expect(detailBody.anime).toBeDefined();
+      expect(detailBody.anime.id).toBe("mal-99991");
+      expect(detailBody.anime.title.romaji).toBe("Jikan Fallback Test Adventure");
+      expect(detailBody.anime.sourceProvider).toBe("jikan");
+
+      // 3. Verify relations / seasons fallback from Jikan
+      expect(Array.isArray(detailBody.anime.seasons)).toBe(true);
+      expect(detailBody.anime.seasons.length).toBeGreaterThanOrEqual(2);
+      const currentSeason = detailBody.anime.seasons.find(
+        (s: { isCurrent?: boolean; malId?: number }) => s.isCurrent && s.malId === 99991
+      );
+      expect(currentSeason).toBeDefined();
+      expect(detailBody.anime.seasons.some((s: { seasonLabel: string }) => s.seasonLabel.includes("Season"))).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

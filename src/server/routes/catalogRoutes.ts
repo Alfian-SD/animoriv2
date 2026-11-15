@@ -17,6 +17,7 @@ import {
   getAniListArchiveStats,
   fetchAnimeSeasons,
 } from "../services/anilist.js";
+import { fetchJikanById } from "../services/jikan.js";
 import { resolveEpisodeStreams } from "../services/streamResolver.js";
 
 export const catalogRouter = Router();
@@ -303,6 +304,18 @@ catalogRouter.get("/:idOrSlug", async (req: Request, res: Response) => {
     const anilistId = Number.parseInt(idOrSlug.replace(/^al-/, ""), 10);
     if (Number.isFinite(anilistId) && anilistId > 0) {
       const directAnime = await fetchAniListById(anilistId);
+      if (directAnime) {
+        aggregator.registerCatalog([directAnime]);
+        found = directAnime;
+      }
+    }
+  }
+
+  // If not found in local cache and ID starts with mal- (e.g. mal-16498), fetch dynamically from Jikan
+  if (!found && idOrSlug.startsWith("mal-")) {
+    const malId = Number.parseInt(idOrSlug.replace(/^mal-/, ""), 10);
+    if (Number.isFinite(malId) && malId > 0) {
+      const directAnime = await fetchJikanById(malId);
       if (directAnime) {
         aggregator.registerCatalog([directAnime]);
         found = directAnime;

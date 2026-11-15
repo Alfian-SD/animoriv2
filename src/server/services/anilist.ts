@@ -1,6 +1,7 @@
 import type { Anime, Episode, PageInfo, RelatedSeason } from "../../shared/anime.js";
 import { SERVER_CONFIG } from "../config.js";
 import { CURATED_ANIME_CATALOG } from "../providers/curatedProvider.js";
+import { queryJikanCatalog, fetchJikanSeasons } from "./jikan.js";
 
 const ANILIST_ENDPOINT = "https://graphql.anilist.co";
 
@@ -539,10 +540,12 @@ export async function queryAniListCatalog(
     }
 
     if (!response.ok) {
-      return {
-        items: [],
-        pageInfo: { total: 0, currentPage: page, lastPage: 1, hasNextPage: false },
-      };
+      return queryJikanCatalog({
+        search: params.search,
+        page,
+        limit: perPage,
+        genres: uniqueGenres,
+      });
     }
 
     const payload = (await response.json()) as {
@@ -557,7 +560,20 @@ export async function queryAniListCatalog(
     const mediaList = (payload.data?.Page?.media ?? []).filter(
       (m) => m.countryOfOrigin !== "CN"
     );
-    const items = mediaList.map((m, index) => mapAniListMediaToAnime(m, index));
+    let items = mediaList.map((m, index) => mapAniListMediaToAnime(m, index));
+
+    // Fallback to Jikan if AniList returns empty media list
+    if (items.length === 0) {
+      const jikanFallback = await queryJikanCatalog({
+        search: params.search,
+        page,
+        limit: perPage,
+        genres: uniqueGenres,
+      });
+      if (jikanFallback.items.length > 0) {
+        return jikanFallback;
+      }
+    }
 
     const pageInfo: PageInfo = payload.data?.Page?.pageInfo ?? {
       total: items.length,
@@ -578,11 +594,13 @@ export async function queryAniListCatalog(
 
     return result;
   } catch (err) {
-    console.error("queryAniListCatalog catch:", err);
-    return {
-      items: [],
-      pageInfo: { total: 0, currentPage: page, lastPage: 1, hasNextPage: false },
-    };
+    console.error("queryAniListCatalog catch, falling back to Jikan:", err);
+    return queryJikanCatalog({
+      search: params.search,
+      page,
+      limit: perPage,
+      genres: uniqueGenres,
+    });
   }
 }
 
@@ -748,7 +766,7 @@ export async function enrichScrapedItemsWithAniList(items: Anime[]): Promise<Ani
 const animeSeasonsCache = new Map<number, { seasons: RelatedSeason[]; expiresAt: number }>();
 const SEASONS_CACHE_TTL_MS = 60 * 60 * 1000;
 
-function cleanBaseTitle(title = ""): string {
+export function cleanBaseTitle(title = ""): string {
   return title
     .toLowerCase()
     .replace(
@@ -760,7 +778,7 @@ function cleanBaseTitle(title = ""): string {
     .trim();
 }
 
-function formatSeasonLabel(rawTitle: string, index: number, total: number): string {
+export function formatSeasonLabel(rawTitle: string, index: number, total: number): string {
   const lower = rawTitle.toLowerCase();
   if (lower.includes("the final season") || lower.includes("final season")) {
     if (lower.includes("part 3") || lower.includes("kanketsu-hen")) return "Final Season Part 3";
@@ -796,7 +814,17 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
     anime.anilistId ??
     CURATED_ANIME_CATALOG.find((c) => c.id === anime.id || c.slug === anime.slug)?.anilistId;
 
+  const malId =
+    anime.malId ??
+    CURATED_ANIME_CATALOG.find((c) => c.id === anime.id || c.slug === anime.slug)?.malId ??
+    (anime.id.startsWith("mal-")
+      ? Number.parseInt(anime.id.replace(/^mal-/, ""), 10)
+      : undefined);
+
   if (!anilistId) {
+    if (malId && Number.isFinite(malId)) {
+      return fetchJikanSeasons(malId);
+    }
     return [];
   }
 
@@ -868,6 +896,9 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
     });
 
     if (!response.ok) {
+      if (malId && Number.isFinite(malId)) {
+        return fetchJikanSeasons(malId);
+      }
       return [];
     }
 
@@ -1024,13 +1055,24 @@ export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> 
       };
     });
 
+    if (finalSeasons.length <= 1 && malId && Number.isFinite(malId)) {
+      const jikanSeasons = await fetchJikanSeasons(malId);
+      if (jikanSeasons.length > finalSeasons.length) {
+        return jikanSeasons;
+      }
+    }
+
     animeSeasonsCache.set(anilistId, {
       seasons: finalSeasons,
       expiresAt: now + SEASONS_CACHE_TTL_MS,
     });
 
     return finalSeasons;
-  } catch {
+  } catch (err) {
+    console.error("fetchAnimeSeasons AniList error, falling back to Jikan:", err);
+    if (malId && Number.isFinite(malId)) {
+      return fetchJikanSeasons(malId);
+    }
     return [];
   }
 }
