@@ -25,6 +25,7 @@ const CLIENT_HOME_CACHE_TTL_MS = 5 * 60 * 1000;
 const PROGRESS_STORAGE_KEY = "aiku.watch-progress.v1";
 
 export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWatchEpisode }) => {
+  // 1. All State Hooks
   const [heroIdx, setHeroIdx] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [continueWatching, setContinueWatching] = useState<Array<{ anime: Anime; progress: WatchProgress }>>([]);
@@ -37,7 +38,7 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
   const [homeData, setHomeData] = useState<HomeData | null>(initialData);
   const [isLoadingHome, setIsLoadingHome] = useState<boolean>(!initialData);
 
-  // Fetch real-time home highlights from AniList + Scrapers
+  // 2. Fetch real-time home highlights from AniList + Scrapers
   useEffect(() => {
     let isMounted = true;
 
@@ -83,23 +84,20 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
     };
   }, []);
 
-  // During cold-load, render Yoake Loading Skeleton to prevent flash of stale content
-  if (isLoadingHome && !homeData) {
-    return <HomeLoadingSkeleton />;
-  }
-
+  // Safe data derivation before rotation hook
   const trendingAnime =
     homeData?.trending && homeData.trending.length > 0
       ? homeData.trending
-      : [...catalog].sort((a, b) => b.score - a.score).slice(0, 10);
+      : Array.isArray(catalog) && catalog.length > 0
+        ? [...catalog].sort((a, b) => b.score - a.score).slice(0, 10)
+        : [];
 
   // Hero anime pool: use top 5 trending titles
   const heroItems = trendingAnime.slice(0, 5);
-  const currentHero = heroItems[heroIdx] || heroItems[0] || catalog[0];
 
-  // Automatic hero rotation (every 7 seconds, pausable, off under reduced motion)
+  // 3. Automatic hero rotation effect with internal guard (never conditionally mounted)
   useEffect(() => {
-    if (isPaused || heroItems.length <= 1) return;
+    if (isLoadingHome || !homeData || isPaused || heroItems.length <= 1) return;
     const isReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (isReduced) return;
 
@@ -107,19 +105,20 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
       setHeroIdx((prev) => (prev + 1) % heroItems.length);
     }, 7000);
     return () => clearInterval(timer);
-  }, [isPaused, heroItems.length]);
+  }, [isLoadingHome, homeData, isPaused, heroItems.length]);
 
+  // 4. Hero index bounds check
   useEffect(() => {
     if (heroIdx >= heroItems.length && heroItems.length > 0) {
       setHeroIdx(0);
     }
   }, [heroItems.length, heroIdx]);
 
-  // Load continue watching from localStorage
+  // 5. Load continue watching from localStorage
   useEffect(() => {
     try {
       const raw = localStorage.getItem(PROGRESS_STORAGE_KEY);
-      if (raw) {
+      if (raw && Array.isArray(catalog) && catalog.length > 0) {
         const map = JSON.parse(raw) as Record<string, WatchProgress>;
         const list: Array<{ anime: Anime; progress: WatchProgress }> = [];
         for (const prog of Object.values(map)) {
@@ -144,19 +143,35 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
     });
   };
 
+  // Safe fallbacks for hero and listing sections
+  const currentHero = heroItems[heroIdx] ?? heroItems[0] ?? catalog[0] ?? null;
+
   const recentlyUpdated =
     homeData?.recentlyUpdated && homeData.recentlyUpdated.length > 0
       ? homeData.recentlyUpdated
-      : catalog.slice(0, 8);
+      : Array.isArray(catalog)
+        ? catalog.slice(0, 8)
+        : [];
 
   const seasonalAnime =
     homeData?.currentSeason && homeData.currentSeason.length > 0
       ? homeData.currentSeason
-      : catalog.filter((a) => a.season === "FALL");
+      : Array.isArray(catalog)
+        ? catalog.filter((a) => a.season === "FALL")
+        : [];
 
-  const recommendedAnime = catalog.filter((a) => a.score >= 9.0).slice(0, 6);
+  const recommendedAnime = Array.isArray(catalog)
+    ? catalog.filter((a) => a.score >= 9.0).slice(0, 6)
+    : [];
 
-  if (!currentHero) return null;
+  // Conditional early return ONLY after ALL hooks have been executed unconditionally
+  if (isLoadingHome && !homeData) {
+    return <HomeLoadingSkeleton />;
+  }
+
+  if (!currentHero) {
+    return <HomeLoadingSkeleton />;
+  }
 
   return (
     <div className="space-y-16 pb-20">
