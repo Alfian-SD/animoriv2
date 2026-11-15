@@ -4,14 +4,14 @@ import { SERVER_CONFIG } from "../config.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { normalizeTitle } from "./aggregator.js";
 import { parseHydratedStreams } from "../providers/externalProvider.js";
-import { extractDirectStream } from "../extractors/streamExtractor.js";
+import { extractDirectStream, unpackDeanEdwards } from "../extractors/streamExtractor.js";
 import { extractRootFranchiseTitle } from "./anilist.js";
 
-interface RawStreamCandidate {
+export interface RawStreamCandidate {
   url: string;
   quality: VideoQuality;
   mode: StreamMode;
-  priority: number; // lower is better
+  priority: number; // lower is better (1: ylnime, 2: doronime.me, 3: doronime.id, 4: otakudesu, 5: nimegami)
 }
 
 const QUALITY_WEIGHT: Record<VideoQuality, number> = {
@@ -20,6 +20,24 @@ const QUALITY_WEIGHT: Record<VideoQuality, number> = {
   "480p": 2,
   "360p": 1,
 };
+
+export function sortStreamCandidates(candidates: RawStreamCandidate[]): RawStreamCandidate[] {
+  return [...candidates].sort((a, b) => {
+    // 1. Tier Prioritas Sumber (Tier 1: ylnime -> Tier 2: doronime.me -> Tier 3: doronime.id -> Tier 4: Otakudesu -> Tier 5: Nimegami)
+    if (a.priority !== b.priority) {
+      return a.priority - b.priority;
+    }
+
+    // 2. Di dalam tier yang sama, dahulukan stream langsung (hls/mp4) di atas embed
+    const aIsDirect = a.mode === "hls" || a.mode === "mp4" ? 1 : 0;
+    const bIsDirect = b.mode === "hls" || b.mode === "mp4" ? 1 : 0;
+    if (aIsDirect !== bIsDirect) return bIsDirect - aIsDirect;
+
+    // 3. Urutkan berdasarkan resolusi (1080p > 720p > 480p > 360p)
+    const qDiff = (QUALITY_WEIGHT[b.quality] ?? 0) - (QUALITY_WEIGHT[a.quality] ?? 0);
+    return qDiff;
+  });
+}
 
 export const STOP_WORDS = new Set([
   "wa",
@@ -225,7 +243,7 @@ async function resolveFromYlnime(
   const baseUrls = ["http://ylnime.com", "https://ylnime.com"];
 
   for (const baseUrl of baseUrls) {
-    for (const query of queries) {
+    for (const query of queries.slice(0, 3)) {
       try {
         const searchUrl = `${baseUrl}/?search=${encodeURIComponent(query)}`;
         const searchRes = await fetch(searchUrl, {
@@ -233,7 +251,7 @@ async function resolveFromYlnime(
             "User-Agent": SERVER_CONFIG.chromeUserAgent,
             Referer: `${baseUrl}/`,
           },
-          signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+          signal: AbortSignal.timeout(2500),
         });
 
         if (!searchRes.ok) continue;
@@ -350,7 +368,8 @@ async function resolveFromYlnime(
           return candidates;
         }
       } catch {
-        // Fallback to next query or base URL
+        // Jika host tidak bisa dijangkau atau timeout, lewati baseUrl ini
+        break;
       }
     }
   }
@@ -359,7 +378,201 @@ async function resolveFromYlnime(
 }
 
 /**
- * 2. Fallback 2 — Otakudesu / ExternalScraper
+ * 2. Tier 2 & Tier 3 — Doronime (doronime.me & doronime.id)
+ * Mencari judul anime di Doronime, mengekstrak link episode, serta mengambil direct/iframe streams.
+ */
+export async function resolveFromDoronime(
+  queries: string[],
+  episodeNumber: number,
+  baseUrl: string,
+  tierPriority: number,
+  slug?: string
+): Promise<RawStreamCandidate[]> {
+  if (!isSafeAllowedStreamUrl(baseUrl)) {
+    return [];
+  }
+
+  const cleanBase = baseUrl.replace(/\/+$/, "");
+
+  for (const query of queries.slice(0, 3)) {
+    try {
+      const searchUrl = `${cleanBase}/?s=${encodeURIComponent(query)}`;
+      const searchRes = await fetch(searchUrl, {
+        headers: {
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+          Referer: `${cleanBase}/`,
+        },
+        signal: AbortSignal.timeout(2500),
+      });
+
+      if (!searchRes.ok) continue;
+      const searchHtml = await searchRes.text();
+      const $search = cheerio.load(searchHtml);
+
+      let bestAnimeHref = "";
+      let bestScore = 0;
+
+      $search("article, .bsx, .listupd .bs, .animepost, .animposx, .box, a").each((_, el) => {
+        const a = $search(el).is("a") ? $search(el) : $search(el).find("a").first();
+        const href = a.attr("href") ?? "";
+        const titleText = $search(el).find(".tt, h2, h3, .title").text().trim() || a.text().trim();
+
+        if (!href || href === "#" || href.includes("javascript:")) return;
+
+        const overlap = calculateWordOverlap(query, titleText);
+        const normSlug = slug ? slug.toLowerCase() : "";
+        const matchesSlug = normSlug && href.toLowerCase().includes(normSlug);
+
+        const currentScore = matchesSlug ? 1.0 : overlap;
+        if (currentScore >= 0.4 && currentScore > bestScore) {
+          bestScore = currentScore;
+          bestAnimeHref = href;
+        }
+      });
+
+      if (!bestAnimeHref) continue;
+
+      const targetAnimeUrl = bestAnimeHref.startsWith("http")
+        ? bestAnimeHref
+        : `${cleanBase}/${bestAnimeHref.replace(/^\/?/, "")}`;
+
+      const animeRes = await fetch(targetAnimeUrl, {
+        headers: {
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+          Referer: `${cleanBase}/`,
+        },
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+
+      if (!animeRes.ok) continue;
+      const animeHtml = await animeRes.text();
+      const $anime = cheerio.load(animeHtml);
+
+      let epHref = "";
+      $anime("a").each((_, a) => {
+        const h = $anime(a).attr("href") ?? "";
+        const t = $anime(a).text().trim().toLowerCase();
+        if (!h || h === "#") return;
+
+        const numMatch =
+          t.match(/episode\s*(\d+)/i) ||
+          t.match(/\bep\s*(\d+)/i) ||
+          h.match(/[-_]episode[-_](\d+)/i) ||
+          h.match(/[-_](\d+)(?:-sub-indo)?\/?$/i);
+        if (numMatch && Number.parseInt(numMatch[1] ?? "0", 10) === episodeNumber) {
+          epHref = h;
+        }
+      });
+
+      if (!epHref) continue;
+
+      const targetEpUrl = epHref.startsWith("http")
+        ? epHref
+        : `${cleanBase}/${epHref.replace(/^\/?/, "")}`;
+
+      const epRes = await fetch(targetEpUrl, {
+        headers: {
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+          Referer: targetAnimeUrl,
+        },
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+
+      if (!epRes.ok) continue;
+      const epHtml = await epRes.text();
+      const unpacked = unpackDeanEdwards(epHtml);
+      const $ep = cheerio.load(unpacked);
+
+      const candidates: RawStreamCandidate[] = [];
+
+      // 1. Direct <video> or <source>
+      $ep("video source, video").each((_, el) => {
+        const src = $ep(el).attr("src");
+        if (src && isSafeAllowedStreamUrl(src)) {
+          candidates.push({
+            url: src,
+            quality: "720p",
+            mode: src.includes(".m3u8") ? "hls" : "mp4",
+            priority: tierPriority,
+          });
+        }
+      });
+
+      // 2. <iframe> embeds
+      const iframes: string[] = [];
+      $ep("iframe").each((_, el) => {
+        const src = $ep(el).attr("src") || $ep(el).attr("data-src") || $ep(el).attr("data-lazy-src");
+        if (src && isSafeAllowedStreamUrl(src)) {
+          iframes.push(src);
+        }
+      });
+
+      // 3. Elements with data-content, data-src, data-video, data-embed (termasuk Base64)
+      $ep("[data-content], [data-src], [data-video], [data-embed]").each((_, el) => {
+        for (const attr of ["data-content", "data-src", "data-video", "data-embed"]) {
+          const val = $ep(el).attr(attr);
+          if (!val) continue;
+
+          let potentialUrl = val.trim();
+          if (!potentialUrl.startsWith("http") && /^[A-Za-z0-9+/=]{16,}$/.test(potentialUrl)) {
+            try {
+              const decoded = Buffer.from(potentialUrl, "base64").toString("utf8");
+              if (decoded.includes("http")) {
+                const matched = decoded.match(/https?:\/\/[^\s"'<>]+/);
+                if (matched) potentialUrl = matched[0];
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          if (potentialUrl.startsWith("http") && isSafeAllowedStreamUrl(potentialUrl)) {
+            iframes.push(potentialUrl);
+          }
+        }
+      });
+
+      // Ekstrak direct stream dari iframes secara paralel dengan timeout 3500ms
+      const settledIframes = await Promise.allSettled(
+        iframes.map(async (u) => {
+          const direct = await extractDirectStream(u, targetEpUrl, 3500);
+          if (direct && isSafeAllowedStreamUrl(direct.url)) {
+            return {
+              url: direct.url,
+              quality: "720p" as VideoQuality,
+              mode: direct.mode,
+              priority: tierPriority,
+            } as RawStreamCandidate;
+          }
+          return {
+            url: u,
+            quality: "720p" as VideoQuality,
+            mode: "embed" as StreamMode,
+            priority: tierPriority,
+          } as RawStreamCandidate;
+        })
+      );
+
+      for (const s of settledIframes) {
+        if (s.status === "fulfilled" && s.value) {
+          candidates.push(s.value);
+        }
+      }
+
+      if (candidates.length > 0) {
+        return candidates;
+      }
+    } catch {
+      // Jika host tidak bisa dijangkau atau timeout, jangan ulangi query di host ini
+      break;
+    }
+  }
+
+  return [];
+}
+
+/**
+ * 4. Fallback 4 — Otakudesu / ExternalScraper
  * Mencari katalog anime berdasarkan word-overlap similarity, membuka halaman episode, dan mengambil stream embed / direct.
  */
 async function resolveFromOtakudesu(
@@ -377,7 +590,7 @@ async function resolveFromOtakudesu(
 
   const cleanBase = otakudesuBase.replace(/\/+$/, "");
 
-  for (const q of queries) {
+  for (const q of queries.slice(0, 3)) {
     try {
       // 1. Cari katalog anime di Otakudesu
       const searchUrl = `${cleanBase}/?s=${encodeURIComponent(q)}&post_type=anime`;
@@ -386,7 +599,7 @@ async function resolveFromOtakudesu(
           "User-Agent": SERVER_CONFIG.chromeUserAgent,
           Referer: `${cleanBase}/`,
         },
-        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+        signal: AbortSignal.timeout(2500),
       });
 
       if (!searchRes.ok) continue;
@@ -484,7 +697,7 @@ async function resolveFromOtakudesu(
             url: direct.url,
             quality: "720p",
             mode: direct.mode,
-            priority: 2,
+            priority: 4,
           });
         } else {
           // JANGAN buang mirror embed!
@@ -492,7 +705,7 @@ async function resolveFromOtakudesu(
             url: initialIframe,
             quality: "720p",
             mode: "embed",
-            priority: 2,
+            priority: 4,
           });
         }
       }
@@ -564,7 +777,7 @@ async function resolveFromOtakudesu(
                       url: direct.url,
                       quality: task.quality,
                       mode: direct.mode,
-                      priority: 2,
+                      priority: 4,
                     } as RawStreamCandidate;
                   }
                   // Fallback ke mode embed jika ekstraksi direct gagal atau timeout > 3500ms
@@ -572,7 +785,7 @@ async function resolveFromOtakudesu(
                     url: playerUrl,
                     quality: task.quality,
                     mode: "embed" as StreamMode,
-                    priority: 2,
+                    priority: 4,
                   } as RawStreamCandidate;
                 }
                 return null;
@@ -592,7 +805,8 @@ async function resolveFromOtakudesu(
         return candidates;
       }
     } catch {
-      // coba kueri selanjutnya
+      // coba kueri selanjutnya atau hentikan jika host gagal
+      break;
     }
   }
 
@@ -606,7 +820,7 @@ async function resolveFromNimegami(
   queries: string[],
   episodeNumber: number
 ): Promise<RawStreamCandidate[]> {
-  for (const q of queries) {
+  for (const q of queries.slice(0, 3)) {
     try {
       const clean = normalizeTitle(q);
       const searchUrl = `https://nimegami.id/?s=${encodeURIComponent(clean)}`;
@@ -615,7 +829,7 @@ async function resolveFromNimegami(
           "User-Agent": SERVER_CONFIG.chromeUserAgent,
           Referer: "https://nimegami.id/",
         },
-        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+        signal: AbortSignal.timeout(2500),
       });
 
       if (!searchRes.ok) continue;
@@ -630,7 +844,7 @@ async function resolveFromNimegami(
           url: h.playUrl,
           quality: h.quality,
           mode: h.playUrl.includes(".m3u8") ? "hls" : h.playUrl.includes(".mp4") ? "mp4" : "embed",
-          priority: 3,
+          priority: 5,
         }));
       }
 
@@ -673,13 +887,14 @@ async function resolveFromNimegami(
               url: h.playUrl,
               quality: h.quality,
               mode: h.playUrl.includes(".m3u8") ? "hls" : h.playUrl.includes(".mp4") ? "mp4" : "embed",
-              priority: 3,
+              priority: 5,
             }));
           }
         }
       }
     } catch {
-      // coba kueri selanjutnya
+      // coba kueri selanjutnya atau hentikan jika host gagal
+      break;
     }
   }
 
@@ -716,6 +931,8 @@ export async function resolveEpisodeStreams(
   // Resolve cross-sources concurrently via Promise.allSettled
   const results = await Promise.allSettled([
     resolveFromYlnime(candidateQueries, params.episodeNumber, params.slug),
+    resolveFromDoronime(candidateQueries, params.episodeNumber, SERVER_CONFIG.doronimeMeUrl, 2, params.slug),
+    resolveFromDoronime(candidateQueries, params.episodeNumber, SERVER_CONFIG.doronimeIdUrl, 3, params.slug),
     resolveFromOtakudesu(candidateQueries, params.episodeNumber),
     resolveFromNimegami(candidateQueries, params.episodeNumber),
   ]);
@@ -729,35 +946,26 @@ export async function resolveEpisodeStreams(
 
   // Deduplicate by URL
   const seenUrls = new Set<string>();
-  const uniqueCandidates: RawStreamCandidate[] = [];
+  const dedupedCandidates: RawStreamCandidate[] = [];
 
   for (const item of rawCandidates) {
     if (!item.url || seenUrls.has(item.url)) continue;
     seenUrls.add(item.url);
-    uniqueCandidates.push(item);
+    dedupedCandidates.push(item);
   }
 
   // Hapus total fallback video dummy open-source.
-  // Jika stream episode belum tersedia, simpan cache maksimal 5 detik saja agar auto-retry dapat mencoba ulang.
-  if (uniqueCandidates.length === 0) {
+  // Jika stream episode belum tersedia, simpan cache maksimal 5 detik saja agar retry dapat mencoba ulang.
+  if (dedupedCandidates.length === 0) {
     streamCache.set(cacheKey, { mirrors: [], expiresAt: now + 5000 });
     return [];
   }
 
-  // Urutkan kandidat:
-  // 1. Direct streams (hls/mp4) sebelum embed
-  // 2. Kualitas menurun (1080p > 720p > 480p > 360p)
-  // 3. Prioritas sumber (ylnime 1 > otakudesu 2 > nimegami 3)
-  uniqueCandidates.sort((a, b) => {
-    const aIsDirect = a.mode === "hls" || a.mode === "mp4" ? 1 : 0;
-    const bIsDirect = b.mode === "hls" || b.mode === "mp4" ? 1 : 0;
-    if (aIsDirect !== bIsDirect) return bIsDirect - aIsDirect;
-
-    const qDiff = (QUALITY_WEIGHT[b.quality] ?? 0) - (QUALITY_WEIGHT[a.quality] ?? 0);
-    if (qDiff !== 0) return qDiff;
-
-    return a.priority - b.priority;
-  });
+  // Urutkan kandidat berdasarkan urutan prioritas:
+  // 1. Tier Prioritas Sumber (Tier 1: ylnime -> Tier 2: doronime.me -> Tier 3: doronime.id -> Tier 4: Otakudesu -> Tier 5: Nimegami)
+  // 2. Di dalam tier yang sama, dahulukan stream langsung (hls/mp4) di atas embed
+  // 3. Urutkan berdasarkan resolusi (1080p > 720p > 480p > 360p)
+  const uniqueCandidates = sortStreamCandidates(dedupedCandidates);
 
   // Anonimisasi label server secara teratur: "Server 1", "Server 2", "Server 3", ...
   const baseId = params.slug || normalizeTitle(params.animeTitle).replace(/\s+/g, "-");

@@ -5,9 +5,11 @@ import { CURATED_ANIME_CATALOG } from "../providers/curatedProvider.js";
 import {
   OtakudesuProvider,
   NimegamiProvider,
+  DoronimeProvider,
   ExternalHtmlScraperProvider,
   isChineseDonghua,
 } from "../providers/externalProvider.js";
+import { SERVER_CONFIG } from "../config.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { fetchAniSkipIntervals } from "../services/aniskip.js";
 import {
@@ -26,13 +28,23 @@ import { resolveEpisodeStreams } from "../services/streamResolver.js";
 export const catalogRouter = Router();
 export const aggregator = new CatalogAggregator();
 
-// Register dual scraper providers: Otakudesu & Nimegami
-const otakudesuUrl = process.env.OTAKUDESU_URL || "https://otakudesu.blog";
+// Register scraper providers: Doronime (me & id), Otakudesu, Nimegami
+const doronimeMeUrl = SERVER_CONFIG.doronimeMeUrl;
+if (isSafeAllowedStreamUrl(doronimeMeUrl)) {
+  aggregator.registerProvider(new DoronimeProvider("doronime-me", doronimeMeUrl));
+}
+
+const doronimeIdUrl = SERVER_CONFIG.doronimeIdUrl;
+if (isSafeAllowedStreamUrl(doronimeIdUrl)) {
+  aggregator.registerProvider(new DoronimeProvider("doronime-id", doronimeIdUrl));
+}
+
+const otakudesuUrl = process.env.OTAKUDESU_URL || SERVER_CONFIG.otakudesuUrl;
 if (isSafeAllowedStreamUrl(otakudesuUrl)) {
   aggregator.registerProvider(new OtakudesuProvider(otakudesuUrl));
 }
 
-const nimegamiUrl = process.env.NIMEGAMI_URL || "https://nimegami.id";
+const nimegamiUrl = process.env.NIMEGAMI_URL || SERVER_CONFIG.nimegamiUrl;
 if (isSafeAllowedStreamUrl(nimegamiUrl)) {
   aggregator.registerProvider(new NimegamiProvider(nimegamiUrl));
 }

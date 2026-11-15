@@ -414,4 +414,28 @@ describe("Express API Integration", { timeout: 15000 }, () => {
     expect(bodyDirect.ok).toBe(true);
     expect(Array.isArray(bodyDirect.skipIntervals)).toBe(true);
   });
+
+  it("registers doronime providers and ensures all returned serverNames are strictly anonymized", async () => {
+    const { aggregator } = await import("../src/server/routes/catalogRoutes.js");
+    const providers = aggregator.getProviders();
+    const providerIds = providers.map((p) => p.id);
+    expect(providerIds).toContain("doronime-me");
+    expect(providerIds).toContain("doronime-id");
+
+    const res = await fetch(`${baseUrl}/api/anime/frieren-beyond-journeys-end/episodes/frieren-beyond-journeys-end-ep-1/mirrors`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(Array.isArray(data.mirrors)).toBe(true);
+    expect(data.mirrors.length).toBeGreaterThan(0);
+
+    data.mirrors.forEach((m: { serverName: string }, idx: number) => {
+      expect(m.serverName).toBe(`Server ${idx + 1}`);
+      const lower = m.serverName.toLowerCase();
+      expect(lower).not.toContain("ylnime");
+      expect(lower).not.toContain("doronime");
+      expect(lower).not.toContain("otakudesu");
+      expect(lower).not.toContain("nimegami");
+    });
+  });
 });

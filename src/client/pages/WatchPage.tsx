@@ -60,11 +60,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         queryParams.set("refresh", "true");
       }
       const qs = queryParams.toString() ? `?${queryParams.toString()}` : "";
+      const timeoutSignal = AbortSignal.timeout(10000);
+      const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+
       const res = await fetch(
         `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
           currentEpisode.id
         )}/mirrors${qs}`,
-        { signal }
+        { signal: combinedSignal }
       );
 
       if (res.ok) {
@@ -91,9 +94,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         setPlaybackOptions([]);
       }
     } finally {
-      if (!signal?.aborted) {
-        setIsLoadingMirrors(false);
-      }
+      setIsLoadingMirrors(false);
     }
   };
 

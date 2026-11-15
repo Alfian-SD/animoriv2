@@ -3,10 +3,11 @@ import type {
   Anime,
   PlaybackOption,
   VideoQuality,
+  StreamMode,
 } from "../../shared/anime.js";
 import { SERVER_CONFIG } from "../config.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
-import { extractDirectStream } from "../extractors/streamExtractor.js";
+import { extractDirectStream, unpackDeanEdwards } from "../extractors/streamExtractor.js";
 
 export interface CatalogProvider {
   readonly id: string;
@@ -46,7 +47,12 @@ export function extractSlugFromHref(rawHref = ""): string {
   const clean = withoutHashOrQuery
     .replace(/^https?:\/\/[^/]+/i, "")
     .replace(/^\/+|\/+$/g, "");
-  const slug = clean.split("/").pop()?.trim() ?? "";
+  const parts = clean.split("/").filter(Boolean);
+  const prefixes = new Set(["anime", "episode", "nonton", "watch", "series", "detail"]);
+  while (parts.length > 1 && prefixes.has(parts[0]?.toLowerCase() ?? "")) {
+    parts.shift();
+  }
+  const slug = parts.pop()?.trim() ?? "";
   if (!slug || slug === "nonton" || slug === "watch" || slug.startsWith("#")) {
     return "";
   }
@@ -549,6 +555,305 @@ export class NimegamiProvider implements CatalogProvider {
     } catch {
       return [];
     }
+  }
+}
+
+/**
+ * Provider Scraper Doronime (doronime.me & doronime.id).
+ * Mendukung ekstraksi episode, video, source, iframe, data-content/data-src/data-video,
+ * dan skrip terkompresi Dean Edwards P.A.C.K.E.R.
+ */
+export class DoronimeProvider implements CatalogProvider {
+  public readonly id: string;
+  public readonly baseUrl: string;
+  private readonly mirrorCache = new Map<
+    string,
+    { options: PlaybackOption[]; expiresAt: number }
+  >();
+  private static readonly MIRROR_TTL_MS = 15 * 60 * 1000;
+
+  constructor(id: string = "doronime-me", baseUrl?: string) {
+    this.id = id;
+    const defaultUrl =
+      id === "doronime-id"
+        ? SERVER_CONFIG.doronimeIdUrl
+        : SERVER_CONFIG.doronimeMeUrl;
+    const raw = baseUrl || defaultUrl;
+    this.baseUrl = raw.replace(/\/+$/, "");
+  }
+
+  public async fetchCatalog(): Promise<Anime[]> {
+    if (!this.baseUrl || !isSafeAllowedStreamUrl(this.baseUrl)) {
+      return [];
+    }
+
+    try {
+      const res = await fetch(`${this.baseUrl}/`, {
+        headers: {
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+          Referer: `${this.baseUrl}/`,
+        },
+        signal: AbortSignal.timeout(3000),
+      });
+
+      if (!res.ok) return [];
+      const html = await res.text();
+      return this.parseAnimeList(html);
+    } catch {
+      return [];
+    }
+  }
+
+  public async searchCatalog(query: string): Promise<Anime[]> {
+    if (!this.baseUrl || !isSafeAllowedStreamUrl(this.baseUrl) || !query.trim()) {
+      return [];
+    }
+
+    try {
+      const searchUrl = `${this.baseUrl}/?s=${encodeURIComponent(query.trim())}`;
+      const res = await fetch(searchUrl, {
+        headers: {
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+          Referer: `${this.baseUrl}/`,
+        },
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+
+      if (!res.ok) return [];
+      const html = await res.text();
+      return this.parseAnimeList(html);
+    } catch {
+      return [];
+    }
+  }
+
+  public parseAnimeList(html: string): Anime[] {
+    const $ = cheerio.load(html);
+    const items: Anime[] = [];
+
+    $("article, .bsx, .listupd .bs, .animepost, .animposx, .box").each((index, el) => {
+      const title =
+        $(el).find(".tt, h2, h3, .title, a").first().text().trim();
+      const href =
+        $(el).find('a[href^="http"]').first().attr("href") ??
+        $(el).find("a").first().attr("href") ??
+        "";
+      const posterUrl =
+        $(el).find("img").attr("src") ||
+        $(el).find("img").attr("data-src") ||
+        $(el).find("img").attr("data-lazy-src");
+      const genres: string[] = [];
+      $(el)
+        .find(".genres a, .genre a")
+        .each((_, g) => {
+          const text = $(g).text().trim();
+          if (text) genres.push(text);
+        });
+
+      const slug = extractSlugFromHref(href);
+      if (!title || !slug) return;
+      if (isChineseDonghua(title, genres)) return;
+
+      const cleanPoster =
+        posterUrl && isSafeAllowedStreamUrl(posterUrl) ? posterUrl : undefined;
+
+      items.push({
+        id: `${this.id}:${slug}`,
+        slug,
+        sourceProvider: this.id,
+        countryOfOrigin: "JP",
+        externalUrl: href.startsWith("http") ? href : `${this.baseUrl}/${href.replace(/^\/+/, "")}`,
+        title: { romaji: title },
+        synopsis: `Katalog anime dari ${this.id}.`,
+        status: "RELEASING",
+        seasonYear: 2026,
+        season: "FALL",
+        score: 8.0,
+        genres: genres.length > 0 ? genres : ["Action", "Fantasy"],
+        studio: "Doronime",
+        artwork: {
+          motif: index % 2 === 0 ? "waves" : "slash",
+          primaryHue: (index * 71) % 360,
+          posterUrl: cleanPoster,
+        },
+        episodes: Array.from({ length: 12 }, (_, idx) => ({
+          id: `${this.id}-${slug}-ep-${idx + 1}`,
+          animeId: `${this.id}:${slug}`,
+          number: idx + 1,
+          title: `Episode ${idx + 1}`,
+          durationMinutes: 24,
+          playbackOptions: [],
+        })),
+      });
+    });
+
+    return items;
+  }
+
+  public async resolveEpisodeMirrors(
+    episodeUrl: string,
+    refresh = false
+  ): Promise<PlaybackOption[]> {
+    if (!isSafeAllowedStreamUrl(episodeUrl)) {
+      return [];
+    }
+
+    if (refresh) {
+      this.mirrorCache.delete(episodeUrl);
+    } else {
+      const cached = this.mirrorCache.get(episodeUrl);
+      if (cached && cached.expiresAt > Date.now() && cached.options.length > 0) {
+        return cached.options;
+      }
+    }
+
+    try {
+      const epRes = await fetch(episodeUrl, {
+        headers: {
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+          Referer: `${this.baseUrl}/`,
+        },
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+
+      if (!epRes.ok) return [];
+      const html = await epRes.text();
+      const options = await this.extractStreamsFromHtml(html, episodeUrl);
+
+      const sorted = sortPlaybackOptionsByQuality(options);
+      const ttl = sorted.length > 0 ? DoronimeProvider.MIRROR_TTL_MS : 5000;
+      this.mirrorCache.set(episodeUrl, {
+        options: sorted,
+        expiresAt: Date.now() + ttl,
+      });
+
+      return sorted;
+    } catch {
+      return [];
+    }
+  }
+
+  public async extractStreamsFromHtml(
+    html: string,
+    refererUrl: string
+  ): Promise<PlaybackOption[]> {
+    const unpacked = unpackDeanEdwards(html);
+    const $ = cheerio.load(unpacked);
+    const rawCandidates: Array<{ url: string; quality: VideoQuality; mode: StreamMode }> = [];
+
+    // 1. Direct <video> or <source>
+    $("video source, video").each((_, el) => {
+      const src = $(el).attr("src");
+      if (src && isSafeAllowedStreamUrl(src)) {
+        rawCandidates.push({
+          url: src,
+          quality: "720p",
+          mode: src.includes(".m3u8") ? "hls" : "mp4",
+        });
+      }
+    });
+
+    // 2. <iframe> embeds
+    $("iframe").each((_, el) => {
+      const src = $(el).attr("src") || $(el).attr("data-src") || $(el).attr("data-lazy-src");
+      if (src && isSafeAllowedStreamUrl(src)) {
+        rawCandidates.push({
+          url: src,
+          quality: "720p",
+          mode: "embed",
+        });
+      }
+    });
+
+    // 3. Elements with data-content, data-src, data-video (termasuk dekode Base64)
+    $("[data-content], [data-src], [data-video], [data-embed]").each((_, el) => {
+      for (const attr of ["data-content", "data-src", "data-video", "data-embed"]) {
+        const val = $(el).attr(attr);
+        if (!val) continue;
+
+        let potentialUrl = val.trim();
+        // Cek jika Base64
+        if (!potentialUrl.startsWith("http") && /^[A-Za-z0-9+/=]{16,}$/.test(potentialUrl)) {
+          try {
+            const decoded = Buffer.from(potentialUrl, "base64").toString("utf8");
+            if (decoded.includes("http")) {
+              const matched = decoded.match(/https?:\/\/[^\s"'<>]+/);
+              if (matched) potentialUrl = matched[0];
+            }
+          } catch {
+            // ignore base64 decode failure
+          }
+        }
+
+        if (potentialUrl.startsWith("http") && isSafeAllowedStreamUrl(potentialUrl)) {
+          rawCandidates.push({
+            url: potentialUrl,
+            quality: "720p",
+            mode: potentialUrl.includes(".m3u8")
+              ? "hls"
+              : potentialUrl.includes(".mp4")
+                ? "mp4"
+                : "embed",
+          });
+        }
+      }
+    });
+
+    // 4. Regex fallback untuk script embedded URLs (.m3u8, .mp4, or embed links)
+    const streamRegex = /(?:src|file|url)\s*[:=]\s*["'](https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)["']/gi;
+    let match: RegExpExecArray | null;
+    while ((match = streamRegex.exec(unpacked)) !== null) {
+      const u = match[1];
+      if (u && isSafeAllowedStreamUrl(u)) {
+        rawCandidates.push({
+          url: u,
+          quality: "720p",
+          mode: u.includes(".m3u8") ? "hls" : "mp4",
+        });
+      }
+    }
+
+    // Deduplikasi kandidat
+    const seen = new Set<string>();
+    const unique = rawCandidates.filter((c) => {
+      if (seen.has(c.url)) return false;
+      seen.add(c.url);
+      return true;
+    });
+
+    // Ekstraksi direct stream secara paralel dengan batas timeout 3500ms
+    const resolvedTasks = await Promise.allSettled(
+      unique.map(async (c) => {
+        if (c.mode === "embed") {
+          const direct = await extractDirectStream(c.url, refererUrl, 3500);
+          if (direct && isSafeAllowedStreamUrl(direct.url)) {
+            return {
+              url: direct.url,
+              quality: c.quality,
+              mode: direct.mode,
+            };
+          }
+        }
+        return c;
+      })
+    );
+
+    const finalCandidates: Array<{ url: string; quality: VideoQuality; mode: StreamMode }> = [];
+    for (const r of resolvedTasks) {
+      if (r.status === "fulfilled" && r.value) {
+        finalCandidates.push(r.value);
+      }
+    }
+
+    // Anonimisasi ketat label server: "Server 1", "Server 2", ...
+    return finalCandidates.map((c, idx) => ({
+      id: `${this.id}-${c.quality}-${idx + 1}`,
+      providerId: this.id,
+      serverName: `Server ${idx + 1}`,
+      quality: c.quality,
+      mode: c.mode,
+      streamUrl: c.url,
+    }));
   }
 }
 

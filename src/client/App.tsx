@@ -94,7 +94,9 @@ export const App: React.FC = () => {
       // If not in local catalog, fetch from backend API /api/anime/:idOrSlug
       try {
         setLoadingAnimeDetails(true);
-        const res = await fetch(`/api/anime/${encodeURIComponent(animeSlug)}`);
+        const res = await fetch(`/api/anime/${encodeURIComponent(animeSlug)}`, {
+          signal: AbortSignal.timeout(10000),
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.ok && data.anime) {
@@ -138,7 +140,9 @@ export const App: React.FC = () => {
       try {
         setLoading(true);
         setError(null);
-        const res = await fetch("/api/catalog");
+        const res = await fetch("/api/catalog", {
+          signal: AbortSignal.timeout(10000),
+        });
         if (!res.ok) {
           throw new Error(`Failed to load catalog from server (HTTP ${res.status})`);
         }
@@ -279,7 +283,7 @@ export const App: React.FC = () => {
             <div className="text-danger font-medium text-base">Server communication failed</div>
             <p className="text-text-2 text-xs">{error}</p>
             <Button variant="secondary" onClick={() => window.location.reload()}>
-              Retry connection
+              Coba muat ulang
             </Button>
           </div>
         ) : (

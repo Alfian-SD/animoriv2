@@ -36,7 +36,7 @@ export function rewriteHlsManifest(
     .join("\n");
 }
 
-function resolveUpstreamReferer(targetUrl: string, customReferer?: string): string {
+export function resolveUpstreamReferer(targetUrl: string, customReferer?: string): string {
   if (customReferer) return customReferer;
   try {
     const urlObj = new URL(targetUrl);
@@ -48,6 +48,12 @@ function resolveUpstreamReferer(targetUrl: string, customReferer?: string): stri
       host.includes("animekita.org")
     ) {
       return "http://ylnime.com/";
+    }
+    if (host.includes("doronime.me")) {
+      return "https://doronime.me/";
+    }
+    if (host.includes("doronime.id")) {
+      return "https://doronime.id/";
     }
     if (host.includes("nimegami") || host.includes("berkasdrive")) {
       return "https://nimegami.id/";
