@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import Hls from "hls.js";
+import type Hls from "hls.js";
 import type { PlaybackOption, SkipInterval, WatchProgress } from "@shared/anime.js";
 import {
   PlayIcon,
@@ -116,58 +116,6 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
     [animeId, episodeId, episodeNumber]
   );
 
-  // Setup video source (MP4 or HLS)
-  useEffect(() => {
-    if (!activeOption || activeOption.mode === "embed") return;
-
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-
-    const streamUrl = `/api/streams/${encodeURIComponent(activeOption.providerId)}/${encodeURIComponent(
-      activeOption.id
-    )}?url=${encodeURIComponent(activeOption.streamUrl)}`;
-
-    if (activeOption.mode === "hls") {
-      if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = streamUrl;
-      } else if (Hls.isSupported()) {
-        const hls = new Hls({ maxBufferLength: 30 });
-        hlsRef.current = hls;
-        hls.loadSource(streamUrl);
-        hls.attachMedia(video);
-
-        hls.on(Hls.Events.ERROR, (_, data) => {
-          if (data.fatal) {
-            handleFailover();
-          }
-        });
-      } else {
-        handleFailover();
-      }
-    } else {
-      video.src = streamUrl;
-    }
-
-    if (initialTime > 0) {
-      video.currentTime = initialTime;
-    }
-
-    return () => {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-    };
-  }, [activeOption, initialTime]);
-
   const handleFailover = useCallback(() => {
     if (activeServerIdx + 1 < options.length) {
       const nextIdx = activeServerIdx + 1;
@@ -178,6 +126,77 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
       setServerError("All available playback servers failed. Please try again later.");
     }
   }, [activeServerIdx, options]);
+
+  // Setup video source (MP4 or lazy HLS)
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !activeOption || activeOption.mode === "embed") return;
+
+    const currentOption = activeOption;
+    const currentVideo = videoEl;
+
+    let isCancelled = false;
+    let hlsInstance: Hls | null = null;
+
+    const proxiedUrl = `/api/streams/${encodeURIComponent(currentOption.providerId)}/${encodeURIComponent(
+      currentOption.id
+    )}?url=${encodeURIComponent(currentOption.streamUrl)}`;
+
+    async function attachMediaSource() {
+      if (currentOption.mode === "hls") {
+        try {
+          const { default: HlsConstructor } = await import("hls.js");
+          if (isCancelled || !videoRef.current) return;
+
+          if (HlsConstructor.isSupported()) {
+            hlsInstance = new HlsConstructor({
+              maxBufferLength: 30,
+              enableWorker: true,
+            });
+            hlsRef.current = hlsInstance;
+            hlsInstance.loadSource(proxiedUrl);
+            hlsInstance.attachMedia(videoRef.current);
+
+            hlsInstance.on(HlsConstructor.Events.ERROR, (_event, data) => {
+              if (data.fatal && !isCancelled) {
+                handleFailover();
+              }
+            });
+            return;
+          }
+
+          // Fallback native HLS (Safari / iOS)
+          if (videoRef.current.canPlayType("application/vnd.apple.mpegurl")) {
+            videoRef.current.src = proxiedUrl;
+            return;
+          }
+
+          if (!isCancelled) handleFailover();
+        } catch {
+          if (!isCancelled) handleFailover();
+        }
+      } else if (currentOption.mode === "mp4") {
+        currentVideo.src = proxiedUrl;
+      }
+    }
+
+    void attachMediaSource();
+
+    if (initialTime > 0) {
+      currentVideo.currentTime = initialTime;
+    }
+
+    return () => {
+      isCancelled = true;
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      hlsRef.current = null;
+      currentVideo.removeAttribute("src");
+      currentVideo.load();
+    };
+  }, [activeOption, initialTime, handleFailover]);
 
   // Video event handlers
   const handleTimeUpdate = () => {

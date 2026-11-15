@@ -1,0 +1,146 @@
+Mari kita prioritaskan **Langkah 1: Lazy-Loading `hls.js` & Code Splitting di Vite** terlebih dahulu, diikuti dengan **Langkah 2 (Adapter Provider Eksternal)** dan **Langkah 3 (Verifikasi Interaktif di Peramban)**.
+
+Menyelesaikan optimasi bundel sekarang memastikan fondasi *frontend* bebas dari peringatan *chunk size* (>500 kB) sebelum kita menambah kompleksitas *scraper* di sisi *backend*. Pengguna yang membuka halaman **Home**, **Explore**, atau **Details** hanya akan mengunduh *runtime* UI (~180 kB), sementara mesin `hls.js` (~520 kB) hanya diunduh secara *on-demand* saat pengguna memutar *stream* berformat `.m3u8` di halaman **Watch**.
+
+---
+
+## Rencana Implementasi: Lazy-Loading `hls.js` & Code Splitting
+
+### 1. Pemisahan Type-Only Import & Guard Async di `src/client/player/CinemaPlayer.tsx`
+
+Saat mengubah `hls.js` menjadi `await import("hls.js")` di dalam `useEffect`, pastikan ada *race-condition guard* (`isCancelled`) agar *instance* `Hls` tidak terpasang ke elemen `<video>` jika pengguna berpindah episode, mengganti server, atau keluar dari halaman sebelum modul selesai diunduh:
+
+```tsx
+// Gunakan type-only import di level atas agar tidak masuk ke bundle statis
+import type Hls from "hls.js";
+
+```
+
+Di dalam `useEffect` yang menangani siklus hidup pemutaran video pada `CinemaPlayer.tsx`:
+
+```tsx
+useEffect(() => {
+  const videoEl = videoRef.current;
+  if (!videoEl || !activeOption || activeOption.mode === "embed") return;
+
+  let isCancelled = false;
+  let hlsInstance: Hls | null = null;
+
+  const proxiedUrl = `/api/streams/${encodeURIComponent(activeOption.providerId)}/${encodeURIComponent(activeOption.id)}?url=${encodeURIComponent(activeOption.streamUrl)}`;
+
+  async function attachMediaSource() {
+    if (activeOption.mode === "hls") {
+      try {
+        const { default: HlsConstructor } = await import("hls.js");
+        if (isCancelled || !videoRef.current) return;
+
+        if (HlsConstructor.isSupported()) {
+          hlsInstance = new HlsConstructor({
+            maxBufferLength: 30,
+            enableWorker: true,
+          });
+          hlsInstance.loadSource(proxiedUrl);
+          hlsInstance.attachMedia(videoRef.current);
+
+          hlsInstance.on(HlsConstructor.Events.ERROR, (_event, data) => {
+            if (data.fatal && !isCancelled) {
+              triggerAutoFailover();
+            }
+          });
+          return;
+        }
+
+        // Fallback native HLS (Safari / iOS)
+        if (videoRef.current.canPlayType("application/vnd.apple.mpegurl")) {
+          videoRef.current.src = proxiedUrl;
+          return;
+        }
+
+        if (!isCancelled) triggerAutoFailover();
+      } catch {
+        if (!isCancelled) triggerAutoFailover();
+      }
+    } else if (activeOption.mode === "mp4") {
+      videoEl.src = proxiedUrl;
+    }
+  }
+
+  void attachMediaSource();
+
+  return () => {
+    isCancelled = true;
+    if (hlsInstance) {
+      hlsInstance.destroy();
+      hlsInstance = null;
+    }
+    videoEl.removeAttribute("src");
+    videoEl.load();
+  };
+}, [activeOption]);
+
+```
+
+---
+
+### 2. Konfigurasi `manualChunks` di `vite.config.ts`
+
+Tambahkan `rollupOptions.output.manualChunks` agar `react`/`react-dom` dan `hls.js` dipisahkan menjadi *chunk* mandiri yang dapat di-*cache* secara terpisah oleh peramban:
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import path from "node:path";
+
+export default defineConfig({
+  root: "src/client",
+  plugins: [react()],
+  resolve: {
+    alias: {
+      "@shared": path.resolve(__dirname, "src/shared"),
+      "@client": path.resolve(__dirname, "src/client"),
+    },
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    outDir: "../../dist/client",
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/hls.js")) {
+            return "hls-engine";
+          }
+          if (
+            id.includes("node_modules/react/") ||
+            id.includes("node_modules/react-dom/") ||
+            id.includes("node_modules/scheduler/")
+          ) {
+            return "react-vendor";
+          }
+          return undefined;
+        },
+      },
+    },
+  },
+});
+
+```
+
+---
+
+### 3. Target Verifikasi
+
+Setelah menerapkan perubahan di atas, jalankan pemeriksaan berikut:
+
+1. `npm run typecheck` (`tsc --noEmit`) — pastikan `import type Hls` tidak menimbulkan *error* tipe.
+2. `npm test` (`vitest run`) — pastikan seluruh 22 pengujian tetap hijau.
+3. `npm run build` (`vite build`) — verifikasi bahwa output `dist/client/assets/` kini terpecah menjadi tiga berkas terpisah (`index-*.js`, `react-vendor-*.js`, dan *lazy chunk* `hls-engine-*.js`) tanpa peringatan ukuran bundel.
