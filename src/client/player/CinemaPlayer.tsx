@@ -11,11 +11,18 @@ import {
   NextIcon,
 } from "../ui/icons.js";
 import { Button } from "../ui/components.js";
+import {
+  resolveResumeTimestamp,
+  resolveEmbedProxyUrl,
+  resolveNextFallbackIndex,
+} from "./playerUtils.js";
 
 const PROGRESS_STORAGE_KEY = "aiku.watch-progress.v1";
 
 export interface CinemaPlayerProps {
   options: PlaybackOption[];
+  activeOptionIndex?: number;
+  onSelectOption?: (index: number) => void;
   animeId: string;
   episodeId: string;
   episodeNumber: number;
@@ -27,6 +34,8 @@ export interface CinemaPlayerProps {
 
 export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   options,
+  activeOptionIndex,
+  onSelectOption,
   animeId,
   episodeId,
   episodeNumber,
@@ -39,7 +48,10 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
-  const [activeServerIdx, setActiveServerIdx] = useState(0);
+  const [internalServerIdx, setInternalServerIdx] = useState(0);
+  const activeIndex = activeOptionIndex ?? internalServerIdx;
+  const handleSelectOption = onSelectOption ?? setInternalServerIdx;
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -50,11 +62,27 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);
   const [activeSkip, setActiveSkip] = useState<SkipInterval | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
 
-  const activeOption = options[activeServerIdx] || options[0];
+  const activeOption = options[activeIndex] || options[0];
 
-  // Load saved watch progress
+  // Auto-next binge countdown timer
   useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      if (onNextEpisode) onNextEpisode();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setCountdown((prev) => (prev !== null ? prev - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [countdown, onNextEpisode]);
+
+  // Load saved watch progress on episode change
+  useEffect(() => {
+    setCountdown(null);
     try {
       const raw = localStorage.getItem(PROGRESS_STORAGE_KEY);
       if (raw) {
@@ -117,15 +145,16 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   );
 
   const handleFailover = useCallback(() => {
-    if (activeServerIdx + 1 < options.length) {
-      const nextIdx = activeServerIdx + 1;
-      setActiveServerIdx(nextIdx);
-      setServerError(`Switched to backup server: ${options[nextIdx]?.serverName}`);
-      setTimeout(() => setServerError(null), 4000);
+    const nextIdx = resolveNextFallbackIndex(activeIndex, options.length);
+    if (nextIdx !== null) {
+      handleSelectOption(nextIdx);
+      const nextOption = options[nextIdx];
+      setServerError(`Switched to backup server: ${nextOption?.serverName} (${nextOption?.quality})`);
+      setTimeout(() => setServerError(null), 5000);
     } else {
       setServerError("All available playback servers failed. Please try again later.");
     }
-  }, [activeServerIdx, options]);
+  }, [activeIndex, options, handleSelectOption]);
 
   // Setup video source (MP4 or lazy HLS)
   useEffect(() => {
@@ -182,10 +211,6 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
 
     void attachMediaSource();
 
-    if (initialTime > 0) {
-      currentVideo.currentTime = initialTime;
-    }
-
     return () => {
       isCancelled = true;
       if (hlsInstance) {
@@ -196,7 +221,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
       currentVideo.removeAttribute("src");
       currentVideo.load();
     };
-  }, [activeOption, initialTime, handleFailover]);
+  }, [activeOption, handleFailover]);
 
   // Video event handlers
   const handleTimeUpdate = () => {
@@ -299,10 +324,10 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
       onMouseMove={() => setShowControls(true)}
       className="relative w-full aspect-video bg-black rounded-poster overflow-hidden border border-line select-none group"
     >
-      {/* Fallback Notice */}
+      {/* Fallback Notice Banner */}
       {serverError && (
-        <div className="absolute top-4 left-4 z-40 bg-surface/90 text-text-2 border border-line px-3 py-1.5 rounded-control text-xs">
-          {serverError}
+        <div className="absolute top-4 left-4 z-40 bg-surface-2 text-text-2 border border-line px-3 py-1.5 rounded-control text-xs flex items-center gap-2">
+          <span>{serverError}</span>
         </div>
       )}
 
@@ -314,11 +339,22 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
           onPause={() => setIsPlaying(false)}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={() => {
-            if (videoRef.current) setDuration(videoRef.current.duration || 0);
+            if (videoRef.current) {
+              const dur = videoRef.current.duration || 0;
+              setDuration(dur);
+              if (initialTime > 0) {
+                const resumeAt = resolveResumeTimestamp(initialTime, dur);
+                if (resumeAt !== null && resumeAt > 0) {
+                  videoRef.current.currentTime = resumeAt;
+                }
+              }
+            }
           }}
           onEnded={() => {
             saveProgress(duration, duration);
-            if (onNextEpisode) onNextEpisode();
+            if (onNextEpisode) {
+              setCountdown(5);
+            }
           }}
           onError={handleFailover}
           playsInline
@@ -326,15 +362,39 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
           onClick={handleTogglePlay}
         />
       ) : (
-        /* Mode 3: Sandboxed Iframe */
+        /* Mode 3: Sandboxed Iframe via /api/streams/embed-proxy */
         <iframe
-          src={activeOption.streamUrl}
+          src={resolveEmbedProxyUrl(activeOption.streamUrl)}
           title={`Episode ${episodeNumber} player`}
           sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
           referrerPolicy="strict-origin-when-cross-origin"
           allow="autoplay; fullscreen; picture-in-picture"
           className="w-full h-full border-0"
         />
+      )}
+
+      {/* Auto-Next Binge Countdown Overlay */}
+      {countdown !== null && onNextEpisode && (
+        <div className="absolute inset-x-0 bottom-16 z-30 mx-auto max-w-sm bg-surface-2 border border-line rounded-poster p-4 flex items-center justify-between gap-4">
+          <span className="text-sm text-text font-medium">
+            Next episode starts in {countdown}s
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setCountdown(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setCountdown(null);
+                onNextEpisode();
+              }}
+            >
+              Play now
+            </Button>
+          </div>
+        </div>
       )}
 
       {/* AniSkip Button Overlay */}
@@ -409,8 +469,8 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
             <div className="flex items-center gap-4">
               {/* Server / Quality dropdown */}
               <select
-                value={activeServerIdx}
-                onChange={(e) => setActiveServerIdx(Number(e.target.value))}
+                value={activeIndex}
+                onChange={(e) => handleSelectOption(Number(e.target.value))}
                 className="bg-surface text-text-2 border border-line rounded px-2 py-1 text-xs focus:outline-none focus:border-accent"
               >
                 {options.map((opt, idx) => (

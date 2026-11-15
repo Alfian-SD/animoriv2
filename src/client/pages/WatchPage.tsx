@@ -1,8 +1,26 @@
-import React, { useState } from "react";
-import type { Anime } from "@shared/anime.js";
+import React, { useState, useEffect } from "react";
+import type { Anime, PlaybackOption } from "@shared/anime.js";
 import { CinemaPlayer } from "../player/CinemaPlayer.js";
 import { Button } from "../ui/components.js";
 import { PrevIcon, NextIcon } from "../ui/icons.js";
+import { formatQualityLabel } from "../player/playerUtils.js";
+
+const PROGRESS_STORAGE_KEY = "aiku.watch-progress.v1";
+
+function getSavedResumeTime(episodeId: string): number {
+  try {
+    const raw = localStorage.getItem(PROGRESS_STORAGE_KEY);
+    if (!raw) return 0;
+    const progressMap = JSON.parse(raw);
+    const item = progressMap[episodeId];
+    if (item && typeof item.currentTime === "number" && !item.completed) {
+      return item.currentTime;
+    }
+  } catch {
+    // Ignore localStorage parse failures
+  }
+  return 0;
+}
 
 interface WatchPageProps {
   anime: Anime;
@@ -24,7 +42,58 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   const hasPrev = episodeNumber > 1;
   const hasNext = episodeNumber < anime.episodes.length;
 
+  const [activeOptionIndex, setActiveOptionIndex] = useState(0);
+  const [playbackOptions, setPlaybackOptions] = useState<PlaybackOption[]>(
+    currentEpisode?.playbackOptions ?? []
+  );
+  const [isLoadingMirrors, setIsLoadingMirrors] = useState(false);
+
+  // Sync mirrors when episode changes
+  useEffect(() => {
+    if (!currentEpisode) return;
+
+    setActiveOptionIndex(0);
+    setPlaybackOptions(currentEpisode.playbackOptions);
+    setIsLoadingMirrors(true);
+
+    const controller = new AbortController();
+
+    const fetchMirrors = async () => {
+      try {
+        const res = await fetch(
+          `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
+            currentEpisode.id
+          )}/mirrors`,
+          { signal: controller.signal }
+        );
+
+        if (res.ok) {
+          const data = (await res.json()) as { mirrors?: PlaybackOption[] };
+          if (Array.isArray(data.mirrors) && data.mirrors.length > 0) {
+            setPlaybackOptions(data.mirrors);
+          }
+        }
+      } catch (err: unknown) {
+        if ((err as Error)?.name !== "AbortError") {
+          // Fallback retained
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoadingMirrors(false);
+        }
+      }
+    };
+
+    void fetchMirrors();
+
+    return () => {
+      controller.abort();
+    };
+  }, [anime.id, currentEpisode]);
+
   if (!currentEpisode) return null;
+
+  const initialResumeTime = getSavedResumeTime(currentEpisode.id);
 
   return (
     <div className="space-y-6 pb-20">
@@ -51,14 +120,60 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         {/* Left / Main: Video Player Surface (Col 8 or Full in Theater) */}
         <div className={`space-y-4 ${theaterMode ? "w-full" : "lg:col-span-8"}`}>
           <CinemaPlayer
-            options={currentEpisode.playbackOptions}
+            options={playbackOptions}
+            activeOptionIndex={activeOptionIndex}
+            onSelectOption={setActiveOptionIndex}
             animeId={anime.id}
             episodeId={currentEpisode.id}
             episodeNumber={currentEpisode.number}
+            initialTime={initialResumeTime}
             theaterMode={theaterMode}
             onToggleTheater={() => setTheaterMode(!theaterMode)}
             onNextEpisode={hasNext ? () => onSelectEpisode(episodeNumber + 1) : undefined}
           />
+
+          {/* Mirror & Server Selection Bar */}
+          <div className="bg-surface border border-line rounded-poster p-3.5 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-text font-medium">Servers & quality</span>
+                {isLoadingMirrors && (
+                  <span className="text-text-3 text-[11px] font-mono animate-pulse">
+                    Syncing mirrors...
+                  </span>
+                )}
+              </div>
+              <span className="text-text-3 font-mono text-[11px]">
+                {playbackOptions.length} source{playbackOptions.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {playbackOptions.map((opt, idx) => {
+                const isActive = idx === activeOptionIndex;
+                return (
+                  <button
+                    key={`${opt.serverName}-${opt.quality}-${idx}`}
+                    type="button"
+                    onClick={() => setActiveOptionIndex(idx)}
+                    className={`px-3 py-1.5 text-xs rounded-control border transition-colors flex items-center gap-1.5 ${
+                      isActive
+                        ? "border-accent text-text bg-surface-2 font-medium"
+                        : "border-line text-text-2 bg-surface hover:border-text-3 hover:text-text"
+                    }`}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isActive ? "bg-accent" : "bg-text-3"
+                      }`}
+                    />
+                    <span>{formatQualityLabel(opt.serverName, opt.quality)}</span>
+                    <span className="text-[10px] text-text-3">({opt.mode})</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {/* Episode Info & Navigation */}
           <div className="bg-surface border border-line rounded-poster p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -139,7 +254,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
                       {ep.durationMinutes}m
                     </span>
                   </div>
-                  {isActive && <span className="text-[10px] font-mono uppercase">Playing</span>}
+                  {isActive && <span className="text-[10px] font-mono">Playing</span>}
                 </button>
               );
             })}
