@@ -36,27 +36,39 @@ export function rewriteHlsManifest(
     .join("\n");
 }
 
-function resolveUpstreamReferer(targetUrl: string): string {
-  if (
-    targetUrl.includes("ylnime.com") ||
-    targetUrl.includes("ylnime") ||
-    targetUrl.includes("animeverse.id") ||
-    targetUrl.includes("animekita.org")
-  ) {
-    return "http://ylnime.com/";
+function resolveUpstreamReferer(targetUrl: string, customReferer?: string): string {
+  if (customReferer) return customReferer;
+  try {
+    const urlObj = new URL(targetUrl);
+    const host = urlObj.hostname.toLowerCase();
+
+    if (
+      host.includes("ylnime.com") ||
+      host.includes("animeverse.id") ||
+      host.includes("animekita.org")
+    ) {
+      return "http://ylnime.com/";
+    }
+    if (host.includes("nimegami") || host.includes("berkasdrive")) {
+      return "https://nimegami.id/";
+    }
+    if (host.includes("samehadaku")) {
+      return "https://samehadaku.email/";
+    }
+    if (host.includes("otakudesu") || host.includes("desustream")) {
+      return "https://desustream.net/";
+    }
+
+    return `${urlObj.origin}/`;
+  } catch {
+    return "https://desustream.net/";
   }
-  if (targetUrl.includes("nimegami") || targetUrl.includes("berkasdrive")) {
-    return "https://nimegami.id/";
-  }
-  if (targetUrl.includes("samehadaku")) {
-    return "https://samehadaku.email/";
-  }
-  return "https://desustream.net/";
 }
 
 // GET /api/streams/embed-proxy
 streamRouter.get("/embed-proxy", async (req: Request, res: Response) => {
   const targetUrl = typeof req.query.url === "string" ? req.query.url : "";
+  const customReferer = typeof req.query.referer === "string" ? req.query.referer : undefined;
 
   if (!isSafeAllowedStreamUrl(targetUrl)) {
     res.status(400).json({ error: "Invalid or forbidden embed URL" });
@@ -65,9 +77,10 @@ streamRouter.get("/embed-proxy", async (req: Request, res: Response) => {
 
   try {
     const upstreamRes = await fetch(targetUrl, {
+      redirect: "follow",
       headers: {
         "User-Agent": SERVER_CONFIG.chromeUserAgent,
-        Referer: resolveUpstreamReferer(targetUrl),
+        Referer: resolveUpstreamReferer(targetUrl, customReferer),
       },
       signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
     });
@@ -117,9 +130,10 @@ streamRouter.get("/:providerId/:streamId", async (req: Request, res: Response) =
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), SERVER_CONFIG.streamTimeoutMs);
 
+  const customReferer = typeof req.query.referer === "string" ? req.query.referer : undefined;
   const upstreamHeaders: Record<string, string> = {
     "User-Agent": SERVER_CONFIG.chromeUserAgent,
-    Referer: resolveUpstreamReferer(targetUrl),
+    Referer: resolveUpstreamReferer(targetUrl, customReferer),
     "Accept-Encoding": "identity",
   };
 
@@ -134,6 +148,7 @@ streamRouter.get("/:providerId/:streamId", async (req: Request, res: Response) =
     const upstreamRes = await fetch(targetUrl, {
       method: "GET",
       headers: upstreamHeaders,
+      redirect: "follow",
       signal: abortController.signal,
     });
 

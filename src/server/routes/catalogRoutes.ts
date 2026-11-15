@@ -495,40 +495,8 @@ catalogRouter.get("/:idOrSlug/episodes/:episodeId/mirrors", async (req: Request,
     }
   }
 
-  // Guaranteed Playable Fallback Mirrors (Anti 0 sources / Anti 404):
-  // Pastikan selalu ada minimal 3 server playable (1080p, 720p, 480p)
-  if (!mirrors || mirrors.length === 0) {
-    const baseId = anime.slug || idOrSlug.replace(/[^a-z0-9-]+/gi, "-");
-    mirrors = [
-      {
-        id: `${baseId}-ep-${episode.number}-fallback-1`,
-        providerId: "resolved",
-        serverName: "Server 1",
-        quality: "1080p",
-        mode: "hls",
-        streamUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-      },
-      {
-        id: `${baseId}-ep-${episode.number}-fallback-2`,
-        providerId: "resolved",
-        serverName: "Server 2",
-        quality: "720p",
-        mode: "mp4",
-        streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-      },
-      {
-        id: `${baseId}-ep-${episode.number}-fallback-3`,
-        providerId: "resolved",
-        serverName: "Server 3",
-        quality: "480p",
-        mode: "mp4",
-        streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-      },
-    ];
-  }
-
   // Strict anonymization: always "Server 1", "Server 2", "Server 3"
-  const anonymizedMirrors = mirrors.map((m, idx) => ({
+  const anonymizedMirrors = (mirrors ?? []).map((m, idx) => ({
     ...m,
     serverName: `Server ${idx + 1}`,
   }));

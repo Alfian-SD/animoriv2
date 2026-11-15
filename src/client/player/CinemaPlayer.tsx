@@ -13,7 +13,6 @@ import {
 import { Button } from "../ui/components.js";
 import {
   resolveResumeTimestamp,
-  resolveEmbedProxyUrl,
   resolveNextFallbackIndex,
 } from "./playerUtils.js";
 
@@ -30,6 +29,7 @@ export interface CinemaPlayerProps {
   theaterMode?: boolean;
   onToggleTheater?: () => void;
   onNextEpisode?: () => void;
+  onRetry?: () => void;
 }
 
 export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
@@ -43,6 +43,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   theaterMode = false,
   onToggleTheater,
   onNextEpisode,
+  onRetry,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -318,6 +319,33 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
     return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
+  if (!options || options.length === 0 || !activeOption) {
+    return (
+      <div
+        ref={containerRef}
+        className="relative w-full aspect-video bg-surface-1 rounded-poster overflow-hidden border border-line flex flex-col items-center justify-center p-6 text-center select-none"
+      >
+        <div className="max-w-md space-y-3">
+          <p className="text-sm text-text font-medium">
+            Stream untuk episode ini belum tersedia di server.
+          </p>
+          <p className="text-xs text-text-3">
+            Episode ini sedang menunggu sinkronisasi mirror dari provider eksternal.
+          </p>
+          <div className="pt-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => (onRetry ? onRetry() : window.location.reload())}
+            >
+              Coba muat ulang
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={containerRef}
@@ -362,13 +390,13 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
           onClick={handleTogglePlay}
         />
       ) : (
-        /* Mode 3: Sandboxed Iframe via /api/streams/embed-proxy */
+        /* Mode 3: Sandboxed Iframe Player with no-referrer */
         <iframe
-          src={resolveEmbedProxyUrl(activeOption.streamUrl)}
+          src={activeOption.streamUrl}
           title={`Episode ${episodeNumber} player`}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-          referrerPolicy="strict-origin-when-cross-origin"
-          allow="autoplay; fullscreen; picture-in-picture"
+          referrerPolicy="no-referrer"
+          allowFullScreen
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           className="w-full h-full border-0"
         />
       )}

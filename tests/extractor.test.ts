@@ -78,4 +78,27 @@ describe("External Scraper & Stream Extractor", () => {
     const sorted = sortPlaybackOptionsByQuality(unsorted);
     expect(sorted.map((o) => o.quality)).toEqual(["1080p", "720p", "480p"]);
   });
+
+  it("builds candidate search queries for long romaji titles and calculates word-overlap similarity >= 50%", async () => {
+    const { buildSearchQueries, calculateWordOverlap } = await import(
+      "../src/server/services/streamResolver.js"
+    );
+
+    const longTitle = "Tensei shita Dai Seijo wa, Seijo de Aru Koto wo Hita Kakusu";
+    const queries = buildSearchQueries({
+      animeTitle: longTitle,
+      animeRomaji: longTitle,
+    });
+
+    expect(queries).toContain(longTitle);
+    expect(queries.some((q) => q.includes("Tensei shita Dai Seijo"))).toBe(true);
+
+    const providerResult = "Tensei shita Daiseijo wa, Seijo de Aru Koto wo Hitakakusu Sub Indo";
+    const overlap = calculateWordOverlap("Tensei shita Dai Seijo", providerResult);
+    expect(overlap).toBeGreaterThanOrEqual(0.5);
+
+    const unrelated = "Gotoubun no Hanayome";
+    const unrelatedOverlap = calculateWordOverlap("Tensei shita Dai Seijo", unrelated);
+    expect(unrelatedOverlap).toBeLessThan(0.5);
+  });
 });

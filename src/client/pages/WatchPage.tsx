@@ -7,33 +7,6 @@ import { formatQualityLabel } from "../player/playerUtils.js";
 
 const PROGRESS_STORAGE_KEY = "aiku.watch-progress.v1";
 
-const DEFAULT_FALLBACK_MIRRORS: PlaybackOption[] = [
-  {
-    id: "fallback-server-1",
-    providerId: "resolved",
-    serverName: "Server 1",
-    quality: "1080p",
-    mode: "hls",
-    streamUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-  },
-  {
-    id: "fallback-server-2",
-    providerId: "resolved",
-    serverName: "Server 2",
-    quality: "720p",
-    mode: "mp4",
-    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-  },
-  {
-    id: "fallback-server-3",
-    providerId: "resolved",
-    serverName: "Server 3",
-    quality: "480p",
-    mode: "mp4",
-    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-  },
-];
-
 function getSavedResumeTime(episodeId: string): number {
   try {
     const raw = localStorage.getItem(PROGRESS_STORAGE_KEY);
@@ -73,9 +46,41 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   const [playbackOptions, setPlaybackOptions] = useState<PlaybackOption[]>(
     currentEpisode?.playbackOptions && currentEpisode.playbackOptions.length > 0
       ? currentEpisode.playbackOptions
-      : DEFAULT_FALLBACK_MIRRORS
+      : []
   );
   const [isLoadingMirrors, setIsLoadingMirrors] = useState(false);
+
+  const fetchMirrors = async (signal?: AbortSignal) => {
+    if (!currentEpisode) return;
+    setIsLoadingMirrors(true);
+    try {
+      const res = await fetch(
+        `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
+          currentEpisode.id
+        )}/mirrors`,
+        { signal }
+      );
+
+      if (res.ok) {
+        const data = (await res.json()) as { mirrors?: PlaybackOption[] };
+        if (Array.isArray(data.mirrors) && data.mirrors.length > 0) {
+          setPlaybackOptions(data.mirrors);
+        } else {
+          setPlaybackOptions([]);
+        }
+      } else {
+        setPlaybackOptions([]);
+      }
+    } catch (err: unknown) {
+      if ((err as Error)?.name !== "AbortError") {
+        setPlaybackOptions([]);
+      }
+    } finally {
+      if (!signal?.aborted) {
+        setIsLoadingMirrors(false);
+      }
+    }
+  };
 
   // Sync mirrors when episode changes
   useEffect(() => {
@@ -85,43 +90,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     setPlaybackOptions(
       currentEpisode.playbackOptions && currentEpisode.playbackOptions.length > 0
         ? currentEpisode.playbackOptions
-        : DEFAULT_FALLBACK_MIRRORS
+        : []
     );
-    setIsLoadingMirrors(true);
 
     const controller = new AbortController();
-
-    const fetchMirrors = async () => {
-      try {
-        const res = await fetch(
-          `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
-            currentEpisode.id
-          )}/mirrors`,
-          { signal: controller.signal }
-        );
-
-        if (res.ok) {
-          const data = (await res.json()) as { mirrors?: PlaybackOption[] };
-          if (Array.isArray(data.mirrors) && data.mirrors.length > 0) {
-            setPlaybackOptions(data.mirrors);
-          } else {
-            setPlaybackOptions(DEFAULT_FALLBACK_MIRRORS);
-          }
-        } else {
-          setPlaybackOptions(DEFAULT_FALLBACK_MIRRORS);
-        }
-      } catch (err: unknown) {
-        if ((err as Error)?.name !== "AbortError") {
-          setPlaybackOptions(DEFAULT_FALLBACK_MIRRORS);
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsLoadingMirrors(false);
-        }
-      }
-    };
-
-    void fetchMirrors();
+    void fetchMirrors(controller.signal);
 
     return () => {
       controller.abort();
@@ -167,6 +140,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
             theaterMode={theaterMode}
             onToggleTheater={() => setTheaterMode(!theaterMode)}
             onNextEpisode={hasNext ? () => onSelectEpisode(episodeNumber + 1) : undefined}
+            onRetry={() => void fetchMirrors()}
           />
 
           {/* Mirror & Server Selection Bar */}
@@ -185,31 +159,37 @@ export const WatchPage: React.FC<WatchPageProps> = ({
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              {playbackOptions.map((opt, idx) => {
-                const isActive = idx === activeOptionIndex;
-                return (
-                  <button
-                    key={`${opt.serverName}-${opt.quality}-${idx}`}
-                    type="button"
-                    onClick={() => setActiveOptionIndex(idx)}
-                    className={`px-3 py-1.5 text-xs rounded-control border transition-colors flex items-center gap-1.5 ${
-                      isActive
-                        ? "border-accent text-text bg-surface-2 font-medium"
-                        : "border-line text-text-2 bg-surface hover:border-text-3 hover:text-text"
-                    }`}
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        isActive ? "bg-accent" : "bg-text-3"
+            {playbackOptions.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {playbackOptions.map((opt, idx) => {
+                  const isActive = idx === activeOptionIndex;
+                  return (
+                    <button
+                      key={`${opt.serverName}-${opt.quality}-${idx}`}
+                      type="button"
+                      onClick={() => setActiveOptionIndex(idx)}
+                      className={`px-3 py-1.5 text-xs rounded-control border transition-colors flex items-center gap-1.5 ${
+                        isActive
+                          ? "border-accent text-text bg-surface-2 font-medium"
+                          : "border-line text-text-2 bg-surface hover:border-text-3 hover:text-text"
                       }`}
-                    />
-                    <span>{formatQualityLabel(opt.serverName, opt.quality)}</span>
-                    <span className="text-[10px] text-text-3">({opt.mode})</span>
-                  </button>
-                );
-              })}
-            </div>
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          isActive ? "bg-accent" : "bg-text-3"
+                        }`}
+                      />
+                      <span>{formatQualityLabel(opt.serverName, opt.quality)}</span>
+                      <span className="text-[10px] text-text-3">({opt.mode})</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-xs text-text-3 py-1">
+                {isLoadingMirrors ? "Memuat daftar server..." : "Tidak ada server mirror yang tersedia saat ini."}
+              </div>
+            )}
           </div>
 
           {/* Episode Info & Navigation */}

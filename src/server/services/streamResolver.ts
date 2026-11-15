@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import type { PlaybackOption, VideoQuality, StreamMode } from "../../shared/anime.js";
+import type { PlaybackOption, VideoQuality, StreamMode, Anime } from "../../shared/anime.js";
 import { SERVER_CONFIG } from "../config.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { normalizeTitle } from "./aggregator.js";
@@ -20,6 +20,28 @@ const QUALITY_WEIGHT: Record<VideoQuality, number> = {
   "480p": 2,
   "360p": 1,
 };
+
+export const STOP_WORDS = new Set([
+  "wa",
+  "ga",
+  "no",
+  "wo",
+  "ni",
+  "de",
+  "to",
+  "the",
+  "of",
+  "a",
+  "an",
+  "in",
+  "on",
+  "at",
+  "is",
+  "and",
+  "or",
+  "for",
+  "with",
+]);
 
 function normalizeQuality(raw: string): VideoQuality {
   const lower = raw.toLowerCase();
@@ -42,25 +64,125 @@ export interface StreamResolverParams {
 }
 
 /**
- * Bangun daftar kandidat kueri pencarian multi-segi untuk anime & sekuel
+ * Hitung kesamaan word-overlap antara kueri pencarian dan judul target (0.0 - 1.0)
  */
-export function buildSearchQueryCandidates(params: {
-  animeTitle: string;
-  animeRomaji?: string;
-  animeEnglish?: string;
-  slug?: string;
-}): string[] {
+export function calculateWordOverlap(query: string, candidate: string): number {
+  const tokenize = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+
+  const qTokens = tokenize(query);
+  const cTokens = tokenize(candidate);
+  if (qTokens.length === 0 || cTokens.length === 0) return 0;
+
+  const cSet = new Set(cTokens);
+  let matches = 0;
+
+  for (const token of qTokens) {
+    if (cSet.has(token)) {
+      matches += 1;
+    } else {
+      // Kecocokan parsial kata majemuk/pemisahan (misal: "daiseijo" <-> "seijo" atau "dai")
+      for (const ct of cSet) {
+        if (ct.includes(token) || token.includes(ct)) {
+          matches += 0.8;
+          break;
+        }
+      }
+    }
+  }
+
+  return matches / qTokens.length;
+}
+
+/**
+ * Bangun daftar kandidat kueri pencarian multi-segi untuk anime & sekuel (mengakomodasi judul panjang)
+ */
+export function buildSearchQueries(
+  animeOrParams:
+    | Anime
+    | StreamResolverParams
+    | {
+        title?: { romaji: string; english?: string };
+        animeTitle?: string;
+        animeRomaji?: string;
+        animeEnglish?: string;
+        slug?: string;
+      }
+): string[] {
   const queries: string[] = [];
 
-  if (params.animeTitle) queries.push(params.animeTitle);
-  if (params.animeRomaji && params.animeRomaji !== params.animeTitle) {
-    queries.push(params.animeRomaji);
+  const romaji =
+    ("title" in animeOrParams ? animeOrParams.title?.romaji : undefined) ||
+    ("animeRomaji" in animeOrParams ? animeOrParams.animeRomaji : undefined) ||
+    ("animeTitle" in animeOrParams ? animeOrParams.animeTitle : undefined) ||
+    "";
+
+  const english =
+    ("title" in animeOrParams ? animeOrParams.title?.english : undefined) ||
+    ("animeEnglish" in animeOrParams ? animeOrParams.animeEnglish : undefined) ||
+    "";
+
+  const slug = ("slug" in animeOrParams ? animeOrParams.slug : undefined) || "";
+
+  // 1. Judul mentah & ternormalisasi (romaji & english)
+  if (romaji) {
+    queries.push(romaji.trim());
+    queries.push(normalizeTitle(romaji));
   }
-  if (params.animeEnglish) {
-    queries.push(params.animeEnglish);
+  if (english) {
+    queries.push(english.trim());
+    queries.push(normalizeTitle(english));
   }
 
-  // Variasi penulisan season: "2nd Season" <-> "Season 2" <-> "S2"
+  // 2. Franchise root title (menghapus Season 2, Part 2, dsb.)
+  if (romaji) {
+    const root = extractRootFranchiseTitle(romaji);
+    if (root && root.length > 2 && root !== romaji) {
+      queries.push(root);
+    }
+  }
+  if (english) {
+    const root = extractRootFranchiseTitle(english);
+    if (root && root.length > 2 && root !== english) {
+      queries.push(root);
+    }
+  }
+
+  // 3. 3-4 kata kunci utama pertama (mengabaikan partikel pendek: wa, ga, no, wo, ni, de, dll.)
+  // Contoh: "Tensei shita Dai Seijo wa, Seijo de Aru Koto wo Hita Kakusu" -> "Tensei shita Dai Seijo"
+  const extractLeadingKeywords = (title: string): string[] => {
+    const words = title
+      .replace(/[,;:.!?"'()[\]{}]+/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 0);
+
+    const significant = words.filter((w) => !STOP_WORDS.has(w.toLowerCase()));
+    const keySubsets: string[] = [];
+
+    if (significant.length >= 3) {
+      keySubsets.push(significant.slice(0, 3).join(" "));
+      keySubsets.push(significant.slice(0, 4).join(" "));
+    } else if (words.length >= 3) {
+      keySubsets.push(words.slice(0, 3).join(" "));
+      keySubsets.push(words.slice(0, 4).join(" "));
+    }
+
+    // Variasi gabungan kata umum seperti "Dai Seijo" <-> "Daiseijo", "Hita Kakusu" <-> "Hitakakusu"
+    if (title.toLowerCase().includes("dai seijo")) {
+      keySubsets.push(title.replace(/dai\s+seijo/gi, "Daiseijo").slice(0, 30).trim());
+    }
+
+    return keySubsets;
+  };
+
+  if (romaji) queries.push(...extractLeadingKeywords(romaji));
+  if (english) queries.push(...extractLeadingKeywords(english));
+
+  // 4. Variasi penulisan season: "2nd Season" <-> "Season 2" <-> "S2"
   const expanded: string[] = [];
   for (const q of queries) {
     const ordMatch = q.match(/(\d+)(?:st|nd|rd|th)\s*season/i);
@@ -78,26 +200,18 @@ export function buildSearchQueryCandidates(params: {
   }
   queries.push(...expanded);
 
-  // Root franchise title
-  if (params.animeTitle) {
-    const root = extractRootFranchiseTitle(params.animeTitle);
-    if (root && root.length > 2 && root !== params.animeTitle) {
-      queries.push(root);
-    }
-  }
-  if (params.animeRomaji) {
-    const root = extractRootFranchiseTitle(params.animeRomaji);
-    if (root && root.length > 2 && root !== params.animeRomaji) {
-      queries.push(root);
-    }
+  if (slug) {
+    queries.push(slug.replace(/-/g, " "));
   }
 
-  if (params.slug) {
-    queries.push(params.slug.replace(/-/g, " "));
-  }
-
+  // Deduplikasi dan buang entri terlalu pendek
   return Array.from(new Set(queries.map((s) => s.trim()).filter((s) => s.length > 2)));
 }
+
+/**
+ * Alias kompatibilitas mundur
+ */
+export const buildSearchQueryCandidates = buildSearchQueries;
 
 /**
  * 1. Prioritas Utama — http://ylnime.com/ (dan https://ylnime.com/)
@@ -245,107 +359,226 @@ async function resolveFromYlnime(
 
 /**
  * 2. Fallback 2 — Otakudesu / ExternalScraper
+ * Mencari katalog anime berdasarkan word-overlap similarity, membuka halaman episode, dan mengambil stream embed / direct.
  */
 async function resolveFromOtakudesu(
   queries: string[],
   episodeNumber: number
 ): Promise<RawStreamCandidate[]> {
-  const externalScraperUrl = process.env.EXTERNAL_SCRAPER_URL;
-  if (!externalScraperUrl || !isSafeAllowedStreamUrl(externalScraperUrl)) {
+  const otakudesuBase =
+    process.env.OTAKUDESU_URL ||
+    process.env.EXTERNAL_SCRAPER_URL ||
+    "https://otakudesu.blog";
+
+  if (!isSafeAllowedStreamUrl(otakudesuBase)) {
     return [];
   }
 
+  const cleanBase = otakudesuBase.replace(/\/+$/, "");
+
   for (const q of queries) {
     try {
-      const slug = normalizeTitle(q).replace(/\s+/g, "-");
-      const episodeUrl = `${externalScraperUrl.replace(/\/+$/, "")}/${slug}-episode-${episodeNumber}/`;
+      // 1. Cari katalog anime di Otakudesu
+      const searchUrl = `${cleanBase}/?s=${encodeURIComponent(q)}&post_type=anime`;
+      const searchRes = await fetch(searchUrl, {
+        headers: {
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+          Referer: `${cleanBase}/`,
+        },
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
 
+      if (!searchRes.ok) continue;
+      const searchHtml = await searchRes.text();
+      const $search = cheerio.load(searchHtml);
+
+      // Cari halaman anime dengan word-overlap tertinggi
+      let bestAnimeUrl = "";
+      let highestScore = 0;
+
+      $search(".chlist, .venz ul li, .page li, article, .jdlflm").each((_, el) => {
+        const a = $search(el).find("h2 a, a").first();
+        const href = a.attr("href");
+        const title = a.text().trim();
+        if (href && (href.includes("/anime/") || !href.includes("/episode/"))) {
+          const score = calculateWordOverlap(q, title);
+          if (score >= 0.5 && score > highestScore) {
+            highestScore = score;
+            bestAnimeUrl = href;
+          }
+        }
+      });
+
+      // Cadangan seleksi jika selektor di atas tidak menemukan kecocokan
+      if (!bestAnimeUrl) {
+        $search("a[href*='/anime/']").each((_, a) => {
+          const href = $search(a).attr("href");
+          const title = $search(a).text().trim();
+          if (href && title) {
+            const score = calculateWordOverlap(q, title);
+            if (score >= 0.4 && score > highestScore) {
+              highestScore = score;
+              bestAnimeUrl = href;
+            }
+          }
+        });
+      }
+
+      if (!bestAnimeUrl) continue;
+
+      // 2. Buka halaman seri anime untuk menemukan episode yang diminta
+      const animeRes = await fetch(bestAnimeUrl, {
+        headers: {
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+          Referer: searchUrl,
+        },
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+
+      if (!animeRes.ok) continue;
+      const animeHtml = await animeRes.text();
+      const $anime = cheerio.load(animeHtml);
+
+      let episodeUrl = "";
+      $anime(".episodelist ul li a, .episodes a, a[href*='-episode-']").each((_, a) => {
+        const href = $anime(a).attr("href") ?? "";
+        const text = $anime(a).text().trim();
+        const match =
+          text.match(/episode\s*(\d+)/i) ||
+          href.match(/[-_](\d+)[-_]/) ||
+          href.match(/[-_](\d+)$/);
+
+        if (match && Number.parseInt(match[1] ?? "0", 10) === episodeNumber) {
+          episodeUrl = href;
+        }
+      });
+
+      if (!episodeUrl) continue;
+
+      // 3. Buka halaman episode
       const epRes = await fetch(episodeUrl, {
         headers: {
           "User-Agent": SERVER_CONFIG.chromeUserAgent,
-          Referer: externalScraperUrl,
+          Referer: bestAnimeUrl,
         },
         signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
       });
 
       if (!epRes.ok) continue;
-      const html = await epRes.text();
-      const actionMatches = [...html.matchAll(/action:\s*["']([a-f0-9]{32})["']/g)].map((m) => m[1]);
-      const streamAction = actionMatches[0];
-      const nonceAction = actionMatches[1];
-      if (!streamAction || !nonceAction) continue;
-
-      const ajaxEndpoint = `${externalScraperUrl.replace(/\/+$/, "")}/wp-admin/admin-ajax.php`;
-      const nonceRes = await fetch(ajaxEndpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": SERVER_CONFIG.chromeUserAgent,
-          Referer: episodeUrl,
-        },
-        body: new URLSearchParams({ action: nonceAction }),
-        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
-      });
-
-      if (!nonceRes.ok) continue;
-      const nonceJson = (await nonceRes.json()) as { data?: string };
-      const nonce = nonceJson.data;
-      if (!nonce) continue;
-
-      const $ = cheerio.load(html);
-      const tasks: Array<{ quality: VideoQuality; payload: string }> = [];
-
-      $(".mirrorstream ul").each((_, ul) => {
-        const q = normalizeQuality($(ul).attr("class") ?? "480p");
-        $(ul)
-          .find("li a[data-content]")
-          .each((__, a) => {
-            const content = $(a).attr("data-content");
-            if (content) tasks.push({ quality: q, payload: content });
-          });
-      });
+      const epHtml = await epRes.text();
+      const $ep = cheerio.load(epHtml);
 
       const candidates: RawStreamCandidate[] = [];
-      for (const task of tasks.slice(0, 4)) {
-        try {
-          const decoded = JSON.parse(Buffer.from(task.payload, "base64").toString("utf8")) as Record<string, string>;
-          const mirrorRes = await fetch(ajaxEndpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-              "User-Agent": SERVER_CONFIG.chromeUserAgent,
-              Referer: episodeUrl,
-            },
-            body: new URLSearchParams({ ...decoded, action: streamAction, nonce }),
-            signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+
+      // A. Ambil player iframe utama di halaman episode
+      const initialIframe =
+        $ep(".responsive-embed-stream iframe").attr("src") ||
+        $ep("#pembed iframe").attr("src") ||
+        $ep("iframe").attr("src");
+
+      if (initialIframe && isSafeAllowedStreamUrl(initialIframe)) {
+        const direct = await extractDirectStream(initialIframe, episodeUrl);
+        if (direct && isSafeAllowedStreamUrl(direct.url)) {
+          candidates.push({
+            url: direct.url,
+            quality: "720p",
+            mode: direct.mode,
+            priority: 2,
           });
+        } else {
+          // JANGAN buang mirror embed!
+          candidates.push({
+            url: initialIframe,
+            quality: "720p",
+            mode: "embed",
+            priority: 2,
+          });
+        }
+      }
 
-          if (!mirrorRes.ok) continue;
-          const mirrorJson = (await mirrorRes.json()) as { data?: string };
-          const rawContent = mirrorJson.data ? Buffer.from(mirrorJson.data, "base64").toString("utf8") : "";
-          const iframeMatch = rawContent.match(/src=["'](https?:\/\/[^"']+)["']/i);
-          const playerUrl = iframeMatch?.[1];
+      // B. Ambil mirrorstream via AJAX
+      const actionMatches = [...epHtml.matchAll(/action:\s*["']([a-f0-9]{32})["']/g)].map((m) => m[1]);
+      const streamAction = actionMatches[0];
+      const nonceAction = actionMatches[1];
 
-          if (playerUrl && isSafeAllowedStreamUrl(playerUrl)) {
-            const direct = await extractDirectStream(playerUrl, episodeUrl);
-            if (direct && isSafeAllowedStreamUrl(direct.url)) {
-              candidates.push({
-                url: direct.url,
-                quality: task.quality,
-                mode: direct.mode,
-                priority: 2,
-              });
-            } else {
-              candidates.push({
-                url: playerUrl,
-                quality: task.quality,
-                mode: "embed",
-                priority: 2,
-              });
+      if (streamAction && nonceAction) {
+        const ajaxEndpoint = `${cleanBase}/wp-admin/admin-ajax.php`;
+        const nonceRes = await fetch(ajaxEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": SERVER_CONFIG.chromeUserAgent,
+            Referer: episodeUrl,
+          },
+          body: new URLSearchParams({ action: nonceAction }),
+          signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+        });
+
+        if (nonceRes.ok) {
+          const nonceJson = (await nonceRes.json()) as { data?: string };
+          const nonce = nonceJson.data;
+
+          if (nonce) {
+            const tasks: Array<{ quality: VideoQuality; payload: string }> = [];
+            $ep(".mirrorstream ul").each((_, ul) => {
+              const q = normalizeQuality($ep(ul).attr("class") ?? "480p");
+              $ep(ul)
+                .find("li a[data-content]")
+                .each((__, a) => {
+                  const content = $ep(a).attr("data-content");
+                  if (content) tasks.push({ quality: q, payload: content });
+                });
+            });
+
+            for (const task of tasks.slice(0, 6)) {
+              try {
+                const decoded = JSON.parse(
+                  Buffer.from(task.payload, "base64").toString("utf8")
+                ) as Record<string, string>;
+
+                const mirrorRes = await fetch(ajaxEndpoint, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": SERVER_CONFIG.chromeUserAgent,
+                    Referer: episodeUrl,
+                  },
+                  body: new URLSearchParams({ ...decoded, action: streamAction, nonce }),
+                  signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+                });
+
+                if (!mirrorRes.ok) continue;
+                const mirrorJson = (await mirrorRes.json()) as { data?: string };
+                const rawContent = mirrorJson.data
+                  ? Buffer.from(mirrorJson.data, "base64").toString("utf8")
+                  : "";
+                const iframeMatch = rawContent.match(/src=["'](https?:\/\/[^"']+)["']/i);
+                const playerUrl = iframeMatch?.[1];
+
+                if (playerUrl && isSafeAllowedStreamUrl(playerUrl)) {
+                  const direct = await extractDirectStream(playerUrl, episodeUrl);
+                  if (direct && isSafeAllowedStreamUrl(direct.url)) {
+                    candidates.push({
+                      url: direct.url,
+                      quality: task.quality,
+                      mode: direct.mode,
+                      priority: 2,
+                    });
+                  } else {
+                    // JANGAN buang mirror embed!
+                    candidates.push({
+                      url: playerUrl,
+                      quality: task.quality,
+                      mode: "embed",
+                      priority: 2,
+                    });
+                  }
+                }
+              } catch {
+                // abaikan kegagalan mirror individual
+              }
             }
           }
-        } catch {
-          // continue
         }
       }
 
@@ -353,7 +586,7 @@ async function resolveFromOtakudesu(
         return candidates;
       }
     } catch {
-      // try next query
+      // coba kueri selanjutnya
     }
   }
 
@@ -381,8 +614,10 @@ async function resolveFromNimegami(
 
       if (!searchRes.ok) continue;
       const html = await searchRes.text();
-      const hydrated = parseHydratedStreams(html);
+      const $ = cheerio.load(html);
 
+      // Cek stream terhidrasi langsung pada halaman pencarian
+      const hydrated = parseHydratedStreams(html);
       const matching = hydrated.filter((h) => h.episode === episodeNumber);
       if (matching.length > 0) {
         return matching.map((h) => ({
@@ -392,8 +627,53 @@ async function resolveFromNimegami(
           priority: 3,
         }));
       }
+
+      // Cek halaman anime hasil pencarian dengan word-overlap
+      let bestAnimeHref = "";
+      let highestScore = 0;
+
+      $(".post-article article, article, .thumbnail-archive").each((_, el) => {
+        const a = $(el).find("a").first();
+        const title = $(el).find("h2, .title").text().trim() || a.text().trim();
+        const href = a.attr("href");
+        if (href && !href.includes("#")) {
+          const score = calculateWordOverlap(q, title);
+          if (score >= 0.5 && score > highestScore) {
+            highestScore = score;
+            bestAnimeHref = href;
+          }
+        }
+      });
+
+      if (bestAnimeHref) {
+        const animeUrl = bestAnimeHref.startsWith("http")
+          ? bestAnimeHref
+          : `https://nimegami.id/${bestAnimeHref.replace(/^\/?/, "")}`;
+
+        const animeRes = await fetch(animeUrl, {
+          headers: {
+            "User-Agent": SERVER_CONFIG.chromeUserAgent,
+            Referer: searchUrl,
+          },
+          signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+        });
+
+        if (animeRes.ok) {
+          const animeHtml = await animeRes.text();
+          const animeHydrated = parseHydratedStreams(animeHtml);
+          const animeMatching = animeHydrated.filter((h) => h.episode === episodeNumber);
+          if (animeMatching.length > 0) {
+            return animeMatching.map((h) => ({
+              url: h.playUrl,
+              quality: h.quality,
+              mode: h.playUrl.includes(".m3u8") ? "hls" : h.playUrl.includes(".mp4") ? "mp4" : "embed",
+              priority: 3,
+            }));
+          }
+        }
+      }
     } catch {
-      // try next query
+      // coba kueri selanjutnya
     }
   }
 
@@ -403,6 +683,7 @@ async function resolveFromNimegami(
 /**
  * Multi-Source Episode Stream Resolver
  * Mengumpulkan, mendeduplikasi, mengurutkan kualitas, dan menganonimkan label server (Server 1, Server 2, ...)
+ * Jika stream tidak ditemukan di semua provider, mengembalikan array kosong [] (tanpa video dummy)
  */
 export async function resolveEpisodeStreams(
   params: StreamResolverParams
@@ -415,7 +696,7 @@ export async function resolveEpisodeStreams(
     return cached.mirrors;
   }
 
-  const candidateQueries = buildSearchQueryCandidates({
+  const candidateQueries = buildSearchQueries({
     animeTitle: params.animeTitle,
     animeRomaji: params.animeRomaji,
     animeEnglish: params.animeEnglish,
@@ -446,34 +727,16 @@ export async function resolveEpisodeStreams(
     uniqueCandidates.push(item);
   }
 
-  // Guaranteed playable fallback mirrors (anti 0 sources)
+  // Hapus total fallback video dummy open-source.
+  // Jika stream episode belum tersedia, kembalikan mirrors kosong [] agar UI menampilkan pesan status resmi.
   if (uniqueCandidates.length === 0) {
-    uniqueCandidates.push(
-      {
-        url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-        quality: "1080p",
-        mode: "hls",
-        priority: 1,
-      },
-      {
-        url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-        quality: "720p",
-        mode: "mp4",
-        priority: 2,
-      },
-      {
-        url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-        quality: "480p",
-        mode: "mp4",
-        priority: 3,
-      }
-    );
+    return [];
   }
 
-  // Sort candidates:
-  // 1. Direct streams (hls/mp4) before embed
-  // 2. Quality descending (1080p > 720p > 480p > 360p)
-  // 3. Source priority (ylnime 1 > otakudesu 2 > nimegami 3)
+  // Urutkan kandidat:
+  // 1. Direct streams (hls/mp4) sebelum embed
+  // 2. Kualitas menurun (1080p > 720p > 480p > 360p)
+  // 3. Prioritas sumber (ylnime 1 > otakudesu 2 > nimegami 3)
   uniqueCandidates.sort((a, b) => {
     const aIsDirect = a.mode === "hls" || a.mode === "mp4" ? 1 : 0;
     const bIsDirect = b.mode === "hls" || b.mode === "mp4" ? 1 : 0;
@@ -485,7 +748,7 @@ export async function resolveEpisodeStreams(
     return a.priority - b.priority;
   });
 
-  // Anonymize server labels: "Server 1", "Server 2", "Server 3", ...
+  // Anonimisasi label server secara teratur: "Server 1", "Server 2", "Server 3", ...
   const baseId = params.slug || normalizeTitle(params.animeTitle).replace(/\s+/g, "-");
   const mirrors: PlaybackOption[] = uniqueCandidates.map((c, idx) => ({
     id: `${baseId}-ep-${params.episodeNumber}-server-${idx + 1}`,
