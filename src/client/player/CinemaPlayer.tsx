@@ -30,6 +30,9 @@ export interface CinemaPlayerProps {
   onToggleTheater?: () => void;
   onNextEpisode?: () => void;
   onRetry?: () => void;
+  isLoadingMirrors?: boolean;
+  retryCount?: number;
+  maxRetries?: number;
 }
 
 export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
@@ -44,6 +47,9 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   onToggleTheater,
   onNextEpisode,
   onRetry,
+  isLoadingMirrors = false,
+  retryCount = 0,
+  maxRetries = 3,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -54,6 +60,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   const handleSelectOption = onSelectOption ?? setInternalServerIdx;
 
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
@@ -157,6 +164,15 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
     }
   }, [activeIndex, options, handleSelectOption]);
 
+  // Update buffering state when activeOption changes
+  useEffect(() => {
+    if (activeOption && activeOption.mode !== "embed") {
+      setIsBuffering(true);
+    } else {
+      setIsBuffering(false);
+    }
+  }, [activeOption?.id, activeOption?.streamUrl, activeOption?.mode]);
+
   // Setup video source (MP4 or lazy HLS)
   useEffect(() => {
     const videoEl = videoRef.current;
@@ -187,6 +203,12 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
             hlsInstance.loadSource(proxiedUrl);
             hlsInstance.attachMedia(videoRef.current);
 
+            hlsInstance.on(HlsConstructor.Events.MANIFEST_PARSED, () => {
+              if (videoRef.current) {
+                videoRef.current.play().catch(() => {});
+              }
+            });
+
             hlsInstance.on(HlsConstructor.Events.ERROR, (_event, data) => {
               if (data.fatal && !isCancelled) {
                 handleFailover();
@@ -198,6 +220,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
           // Fallback native HLS (Safari / iOS)
           if (videoRef.current.canPlayType("application/vnd.apple.mpegurl")) {
             videoRef.current.src = proxiedUrl;
+            videoRef.current.play().catch(() => {});
             return;
           }
 
@@ -207,6 +230,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
         }
       } else if (currentOption.mode === "mp4") {
         currentVideo.src = proxiedUrl;
+        currentVideo.play().catch(() => {});
       }
     }
 
@@ -320,10 +344,36 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   };
 
   if (!options || options.length === 0 || !activeOption) {
+    if (isLoadingMirrors) {
+      const subtitle =
+        retryCount > 0
+          ? `Mencari server cadangan... (percobaan ${retryCount}/${maxRetries})`
+          : "Menghubungkan ke sumber streaming...";
+
+      return (
+        <div
+          ref={containerRef}
+          className="relative w-full aspect-video bg-[#09090B] rounded-poster overflow-hidden border border-line flex flex-col items-center justify-center p-6 text-center select-none"
+        >
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 rounded-full border-2 border-[var(--line)] border-t-[var(--accent)] animate-spin" />
+            <div className="space-y-1">
+              <p className="text-sm text-text font-medium">
+                Menyiapkan server video...
+              </p>
+              <p className="text-xs text-text-3 font-mono">
+                {subtitle}
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         ref={containerRef}
-        className="relative w-full aspect-video bg-surface-1 rounded-poster overflow-hidden border border-line flex flex-col items-center justify-center p-6 text-center select-none"
+        className="relative w-full aspect-video bg-[#09090B] rounded-poster overflow-hidden border border-line flex flex-col items-center justify-center p-6 text-center select-none"
       >
         <div className="max-w-md space-y-3">
           <p className="text-sm text-text font-medium">
@@ -332,7 +382,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
           <p className="text-xs text-text-3">
             Episode ini sedang menunggu sinkronisasi mirror dari provider eksternal.
           </p>
-          <div className="pt-2">
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
             <Button
               variant="secondary"
               size="sm"
@@ -340,6 +390,15 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
             >
               Coba muat ulang
             </Button>
+            {onNextEpisode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onNextEpisode}
+              >
+                Pindah ke episode berikutnya →
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -350,8 +409,39 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
     <div
       ref={containerRef}
       onMouseMove={() => setShowControls(true)}
-      className="relative w-full aspect-video bg-black rounded-poster overflow-hidden border border-line select-none group"
+      className="relative w-full aspect-video bg-[#09090B] rounded-poster overflow-hidden border border-line select-none group"
     >
+      {/* Loading Mirrors Overlay (Condition A) */}
+      {isLoadingMirrors && (
+        <div className="absolute inset-0 bg-[#09090B] flex flex-col items-center justify-center p-6 z-30 select-none">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 rounded-full border-2 border-[var(--line)] border-t-[var(--accent)] animate-spin" />
+            <div className="space-y-1 text-center">
+              <p className="text-sm text-text font-medium">
+                Menyiapkan server video...
+              </p>
+              <p className="text-xs text-text-3 font-mono">
+                {retryCount > 0
+                  ? `Mencari server cadangan... (percobaan ${retryCount}/${maxRetries})`
+                  : "Menghubungkan ke sumber streaming..."}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Video Buffering Overlay (Condition B) */}
+      {isBuffering && !isLoadingMirrors && activeOption?.mode !== "embed" && (
+        <div className="absolute inset-0 bg-[#09090B]/70 flex flex-col items-center justify-center p-4 z-30 pointer-events-none select-none">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 rounded-full border-2 border-[var(--line)] border-t-[var(--accent)] animate-spin" />
+            <p className="text-xs text-text-2 font-mono">
+              Memuat stream ({activeOption.serverName} · {activeOption.quality})...
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Fallback Notice Banner */}
       {serverError && (
         <div className="absolute top-4 left-4 z-40 bg-surface-2 text-text-2 border border-line px-3 py-1.5 rounded-control text-xs flex items-center gap-2">
@@ -363,8 +453,21 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
       {activeOption?.mode !== "embed" ? (
         <video
           ref={videoRef}
-          onPlay={() => setIsPlaying(true)}
+          autoPlay
+          onPlay={() => {
+            setIsPlaying(true);
+            setIsBuffering(false);
+          }}
           onPause={() => setIsPlaying(false)}
+          onLoadStart={() => setIsBuffering(true)}
+          onWaiting={() => setIsBuffering(true)}
+          onSeeking={() => setIsBuffering(true)}
+          onCanPlay={() => setIsBuffering(false)}
+          onPlaying={() => {
+            setIsPlaying(true);
+            setIsBuffering(false);
+          }}
+          onSeeked={() => setIsBuffering(false)}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={() => {
             if (videoRef.current) {

@@ -48,37 +48,82 @@ export const WatchPage: React.FC<WatchPageProps> = ({
       ? currentEpisode.playbackOptions
       : []
   );
-  const [isLoadingMirrors, setIsLoadingMirrors] = useState(false);
+  const [isLoadingMirrors, setIsLoadingMirrors] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
 
-  const fetchMirrors = async (signal?: AbortSignal) => {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 2500;
+
+  const fetchMirrorsWithRetry = async (signal?: AbortSignal, forceRefresh = false) => {
     if (!currentEpisode) return;
     setIsLoadingMirrors(true);
-    try {
-      const res = await fetch(
-        `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
-          currentEpisode.id
-        )}/mirrors`,
-        { signal }
-      );
+    setRetryCount(0);
 
-      if (res.ok) {
-        const data = (await res.json()) as { mirrors?: PlaybackOption[] };
-        if (Array.isArray(data.mirrors) && data.mirrors.length > 0) {
-          setPlaybackOptions(data.mirrors);
-        } else {
-          setPlaybackOptions([]);
+    let attempt = 0;
+    while (!signal?.aborted) {
+      try {
+        const queryParams = new URLSearchParams();
+        if (attempt > 0 || forceRefresh) {
+          queryParams.set("refresh", "true");
         }
-      } else {
-        setPlaybackOptions([]);
+        const qs = queryParams.toString() ? `?${queryParams.toString()}` : "";
+        const res = await fetch(
+          `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
+            currentEpisode.id
+          )}/mirrors${qs}`,
+          { signal }
+        );
+
+        if (res.ok) {
+          const data = (await res.json()) as { mirrors?: PlaybackOption[] };
+          if (Array.isArray(data.mirrors) && data.mirrors.length > 0) {
+            setPlaybackOptions(data.mirrors);
+            setActiveOptionIndex(0);
+            setIsLoadingMirrors(false);
+            setRetryCount(0);
+
+            // Background prefetch for next episode (Episode N + 1)
+            const nextEp = anime.episodes.find((ep) => ep.number === currentEpisode.number + 1);
+            if (nextEp) {
+              fetch(
+                `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
+                  nextEp.id
+                )}/mirrors`
+              ).catch(() => {});
+            }
+            return;
+          }
+        }
+      } catch (err: unknown) {
+        if ((err as Error)?.name === "AbortError") {
+          return;
+        }
       }
-    } catch (err: unknown) {
-      if ((err as Error)?.name !== "AbortError") {
-        setPlaybackOptions([]);
+
+      attempt += 1;
+      if (attempt > MAX_RETRIES) {
+        break;
       }
-    } finally {
-      if (!signal?.aborted) {
-        setIsLoadingMirrors(false);
-      }
+
+      setRetryCount(attempt);
+
+      // Jeda 2.5 detik antar-percobaan auto-refresh
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, RETRY_DELAY_MS);
+        signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true }
+        );
+      });
+    }
+
+    if (!signal?.aborted) {
+      setPlaybackOptions([]);
+      setIsLoadingMirrors(false);
     }
   };
 
@@ -94,12 +139,12 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     );
 
     const controller = new AbortController();
-    void fetchMirrors(controller.signal);
+    void fetchMirrorsWithRetry(controller.signal);
 
     return () => {
       controller.abort();
     };
-  }, [anime.id, currentEpisode]);
+  }, [anime.id, currentEpisode?.id]);
 
   if (!currentEpisode) return null;
 
@@ -140,7 +185,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({
             theaterMode={theaterMode}
             onToggleTheater={() => setTheaterMode(!theaterMode)}
             onNextEpisode={hasNext ? () => onSelectEpisode(episodeNumber + 1) : undefined}
-            onRetry={() => void fetchMirrors()}
+            onRetry={() => void fetchMirrorsWithRetry(undefined, true)}
+            isLoadingMirrors={isLoadingMirrors}
+            retryCount={retryCount}
+            maxRetries={MAX_RETRIES}
           />
 
           {/* Mirror & Server Selection Bar */}
@@ -149,17 +197,32 @@ export const WatchPage: React.FC<WatchPageProps> = ({
               <div className="flex items-center gap-2">
                 <span className="text-text font-medium">Servers & quality</span>
                 {isLoadingMirrors && (
-                  <span className="text-text-3 text-[11px] font-mono animate-pulse">
-                    Syncing mirrors...
-                  </span>
+                  <div className="flex items-center gap-1.5 text-text-3 text-[11px] font-mono">
+                    <span className="w-3 h-3 rounded-full border border-[var(--line)] border-t-[var(--accent)] animate-spin" />
+                    <span>Syncing mirrors...</span>
+                  </div>
                 )}
               </div>
               <span className="text-text-3 font-mono text-[11px]">
-                {playbackOptions.length} source{playbackOptions.length === 1 ? "" : "s"}
+                {isLoadingMirrors
+                  ? "..."
+                  : `${playbackOptions.length} source${playbackOptions.length === 1 ? "" : "s"}`}
               </span>
             </div>
 
-            {playbackOptions.length > 0 ? (
+            {isLoadingMirrors ? (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {[1, 2, 3].map((n) => (
+                  <div
+                    key={n}
+                    className="h-8 w-28 rounded-control bg-surface-2 border border-line/60 animate-pulse flex items-center px-3 gap-2"
+                  >
+                    <div className="w-1.5 h-1.5 rounded-full bg-line" />
+                    <div className="h-2.5 w-16 bg-line/80 rounded" />
+                  </div>
+                ))}
+              </div>
+            ) : playbackOptions.length > 0 ? (
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {playbackOptions.map((opt, idx) => {
                   const isActive = idx === activeOptionIndex;
@@ -187,7 +250,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
               </div>
             ) : (
               <div className="text-xs text-text-3 py-1">
-                {isLoadingMirrors ? "Memuat daftar server..." : "Tidak ada server mirror yang tersedia saat ini."}
+                Tidak ada server mirror yang tersedia saat ini.
               </div>
             )}
           </div>

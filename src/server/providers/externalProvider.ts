@@ -11,7 +11,7 @@ import { extractDirectStream } from "../extractors/streamExtractor.js";
 export interface CatalogProvider {
   readonly id: string;
   fetchCatalog(): Promise<Anime[]>;
-  resolveEpisodeMirrors(episodeUrl: string): Promise<PlaybackOption[]>;
+  resolveEpisodeMirrors(episodeUrl: string, refresh?: boolean): Promise<PlaybackOption[]>;
 }
 
 export interface HydratedStreamEntry {
@@ -264,15 +264,20 @@ export class OtakudesuProvider implements CatalogProvider {
   }
 
   public async resolveEpisodeMirrors(
-    episodeUrl: string
+    episodeUrl: string,
+    refresh = false
   ): Promise<PlaybackOption[]> {
     if (!isSafeAllowedStreamUrl(episodeUrl)) {
       return [];
     }
 
-    const cached = this.mirrorCache.get(episodeUrl);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.options;
+    if (refresh) {
+      this.mirrorCache.delete(episodeUrl);
+    } else {
+      const cached = this.mirrorCache.get(episodeUrl);
+      if (cached && cached.expiresAt > Date.now() && cached.options.length > 0) {
+        return cached.options;
+      }
     }
 
     try {
@@ -368,7 +373,7 @@ export class OtakudesuProvider implements CatalogProvider {
             return null;
           }
 
-          const direct = await extractDirectStream(iframeSrc, episodeUrl);
+          const direct = await extractDirectStream(iframeSrc, episodeUrl, 3500);
 
           return {
             id: `${this.id}-${task.quality}-${idx}`,
@@ -389,9 +394,10 @@ export class OtakudesuProvider implements CatalogProvider {
         .map((r) => r.value);
 
       const sorted = sortPlaybackOptionsByQuality(validOptions);
+      const ttl = sorted.length > 0 ? OtakudesuProvider.MIRROR_TTL_MS : 5000;
       this.mirrorCache.set(episodeUrl, {
         options: sorted,
-        expiresAt: Date.now() + OtakudesuProvider.MIRROR_TTL_MS,
+        expiresAt: Date.now() + ttl,
       });
 
       return sorted;
@@ -490,15 +496,20 @@ export class NimegamiProvider implements CatalogProvider {
   }
 
   public async resolveEpisodeMirrors(
-    episodeUrl: string
+    episodeUrl: string,
+    refresh = false
   ): Promise<PlaybackOption[]> {
     if (!isSafeAllowedStreamUrl(episodeUrl)) {
       return [];
     }
 
-    const cached = this.mirrorCache.get(episodeUrl);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.options;
+    if (refresh) {
+      this.mirrorCache.delete(episodeUrl);
+    } else {
+      const cached = this.mirrorCache.get(episodeUrl);
+      if (cached && cached.expiresAt > Date.now() && cached.options.length > 0) {
+        return cached.options;
+      }
     }
 
     try {
@@ -528,9 +539,10 @@ export class NimegamiProvider implements CatalogProvider {
       }));
 
       const sorted = sortPlaybackOptionsByQuality(options);
+      const ttl = sorted.length > 0 ? NimegamiProvider.MIRROR_TTL_MS : 5000;
       this.mirrorCache.set(episodeUrl, {
         options: sorted,
-        expiresAt: Date.now() + NimegamiProvider.MIRROR_TTL_MS,
+        expiresAt: Date.now() + ttl,
       });
 
       return sorted;

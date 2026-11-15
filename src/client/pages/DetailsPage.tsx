@@ -67,6 +67,25 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
     };
   }, [anime.id]);
 
+  // Background prefetch for episode 1 mirrors so clicking "Watch episode 1" is instant
+  useEffect(() => {
+    if (!currentAnime?.id || !currentAnime.episodes || currentAnime.episodes.length === 0) return;
+    const ep1 = currentAnime.episodes.find((ep) => ep.number === 1) || currentAnime.episodes[0];
+    if (!ep1) return;
+
+    const controller = new AbortController();
+    fetch(
+      `/api/anime/${encodeURIComponent(currentAnime.id)}/episodes/${encodeURIComponent(
+        ep1.id
+      )}/mirrors`,
+      { signal: controller.signal }
+    ).catch(() => {});
+
+    return () => {
+      controller.abort();
+    };
+  }, [currentAnime?.id]);
+
   const activeAnime = currentAnime;
 
   const handleSeasonClick = async (season: RelatedSeason) => {

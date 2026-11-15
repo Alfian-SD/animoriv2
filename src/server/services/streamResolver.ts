@@ -61,6 +61,7 @@ export interface StreamResolverParams {
   animeRomaji?: string;
   animeEnglish?: string;
   slug?: string;
+  refresh?: boolean;
 }
 
 /**
@@ -477,7 +478,7 @@ async function resolveFromOtakudesu(
         $ep("iframe").attr("src");
 
       if (initialIframe && isSafeAllowedStreamUrl(initialIframe)) {
-        const direct = await extractDirectStream(initialIframe, episodeUrl);
+        const direct = await extractDirectStream(initialIframe, episodeUrl, 3500);
         if (direct && isSafeAllowedStreamUrl(direct.url)) {
           candidates.push({
             url: direct.url,
@@ -496,7 +497,7 @@ async function resolveFromOtakudesu(
         }
       }
 
-      // B. Ambil mirrorstream via AJAX
+      // B. Ambil mirrorstream via AJAX secara paralel
       const actionMatches = [...epHtml.matchAll(/action:\s*["']([a-f0-9]{32})["']/g)].map((m) => m[1]);
       const streamAction = actionMatches[0];
       const nonceAction = actionMatches[1];
@@ -530,8 +531,9 @@ async function resolveFromOtakudesu(
                 });
             });
 
-            for (const task of tasks.slice(0, 6)) {
-              try {
+            // Ekstrak mirror secara paralel dengan batasan timeout 3500ms per mirror
+            const mirrorSettled = await Promise.allSettled(
+              tasks.slice(0, 8).map(async (task) => {
                 const decoded = JSON.parse(
                   Buffer.from(task.payload, "base64").toString("utf8")
                 ) as Record<string, string>;
@@ -547,7 +549,7 @@ async function resolveFromOtakudesu(
                   signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
                 });
 
-                if (!mirrorRes.ok) continue;
+                if (!mirrorRes.ok) return null;
                 const mirrorJson = (await mirrorRes.json()) as { data?: string };
                 const rawContent = mirrorJson.data
                   ? Buffer.from(mirrorJson.data, "base64").toString("utf8")
@@ -556,26 +558,30 @@ async function resolveFromOtakudesu(
                 const playerUrl = iframeMatch?.[1];
 
                 if (playerUrl && isSafeAllowedStreamUrl(playerUrl)) {
-                  const direct = await extractDirectStream(playerUrl, episodeUrl);
+                  const direct = await extractDirectStream(playerUrl, episodeUrl, 3500);
                   if (direct && isSafeAllowedStreamUrl(direct.url)) {
-                    candidates.push({
+                    return {
                       url: direct.url,
                       quality: task.quality,
                       mode: direct.mode,
                       priority: 2,
-                    });
-                  } else {
-                    // JANGAN buang mirror embed!
-                    candidates.push({
-                      url: playerUrl,
-                      quality: task.quality,
-                      mode: "embed",
-                      priority: 2,
-                    });
+                    } as RawStreamCandidate;
                   }
+                  // Fallback ke mode embed jika ekstraksi direct gagal atau timeout > 3500ms
+                  return {
+                    url: playerUrl,
+                    quality: task.quality,
+                    mode: "embed" as StreamMode,
+                    priority: 2,
+                  } as RawStreamCandidate;
                 }
-              } catch {
-                // abaikan kegagalan mirror individual
+                return null;
+              })
+            );
+
+            for (const r of mirrorSettled) {
+              if (r.status === "fulfilled" && r.value) {
+                candidates.push(r.value);
               }
             }
           }
@@ -691,9 +697,13 @@ export async function resolveEpisodeStreams(
   const cacheKey = `${normalizeTitle(params.animeTitle)}-ep-${params.episodeNumber}`;
   const now = Date.now();
 
-  const cached = streamCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
-    return cached.mirrors;
+  if (params.refresh) {
+    streamCache.delete(cacheKey);
+  } else {
+    const cached = streamCache.get(cacheKey);
+    if (cached && cached.expiresAt > now && cached.mirrors.length > 0) {
+      return cached.mirrors;
+    }
   }
 
   const candidateQueries = buildSearchQueries({
@@ -728,8 +738,9 @@ export async function resolveEpisodeStreams(
   }
 
   // Hapus total fallback video dummy open-source.
-  // Jika stream episode belum tersedia, kembalikan mirrors kosong [] agar UI menampilkan pesan status resmi.
+  // Jika stream episode belum tersedia, simpan cache maksimal 5 detik saja agar auto-retry dapat mencoba ulang.
   if (uniqueCandidates.length === 0) {
+    streamCache.set(cacheKey, { mirrors: [], expiresAt: now + 5000 });
     return [];
   }
 
@@ -761,6 +772,8 @@ export async function resolveEpisodeStreams(
 
   if (mirrors.length > 0) {
     streamCache.set(cacheKey, { mirrors, expiresAt: now + CACHE_TTL_MS });
+  } else {
+    streamCache.set(cacheKey, { mirrors: [], expiresAt: now + 5000 });
   }
 
   return mirrors;

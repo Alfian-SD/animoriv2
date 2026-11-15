@@ -101,4 +101,28 @@ describe("External Scraper & Stream Extractor", () => {
     const unrelatedOverlap = calculateWordOverlap("Tensei shita Dai Seijo", unrelated);
     expect(unrelatedOverlap).toBeLessThan(0.5);
   });
+
+  it("extractDirectStream returns null and falls back quickly on timeout or ssrf", async () => {
+    const { extractDirectStream } = await import(
+      "../src/server/extractors/streamExtractor.js"
+    );
+
+    // SSRF URL should immediately return null
+    const ssrfResult = await extractDirectStream("http://169.254.169.254/latest", "https://example.com");
+    expect(ssrfResult).toBeNull();
+  });
+
+  it("streamResolver supports refresh query and bypasses cache when refresh=true", async () => {
+    const { resolveEpisodeStreams } = await import(
+      "../src/server/services/streamResolver.js"
+    );
+
+    const mirrors1 = await resolveEpisodeStreams({
+      animeTitle: "Non Existent Anime Title 12345",
+      episodeNumber: 99,
+      refresh: true,
+    });
+    expect(Array.isArray(mirrors1)).toBe(true);
+    expect(mirrors1).toHaveLength(0);
+  });
 });

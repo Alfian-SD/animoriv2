@@ -464,6 +464,7 @@ catalogRouter.get("/:idOrSlug/episodes/:episodeId/mirrors", async (req: Request,
   }
 
   let mirrors = episode.playbackOptions ?? [];
+  const refresh = req.query.refresh === "true" || req.query.refresh === "1";
 
   // Resolve episode streams dynamically across multi-sources (ylnime -> otakudesu -> nimegami)
   const resolved = await resolveEpisodeStreams({
@@ -472,6 +473,7 @@ catalogRouter.get("/:idOrSlug/episodes/:episodeId/mirrors", async (req: Request,
     animeEnglish: anime.title.english,
     slug: anime.slug,
     episodeNumber: episode.number,
+    refresh,
   });
 
   if (resolved.length > 0) {
@@ -487,7 +489,7 @@ catalogRouter.get("/:idOrSlug/episodes/:episodeId/mirrors", async (req: Request,
           : "");
 
       if (episodeUrl && isSafeAllowedStreamUrl(episodeUrl)) {
-        const dynamicMirrors = await provider.resolveEpisodeMirrors(episodeUrl);
+        const dynamicMirrors = await provider.resolveEpisodeMirrors(episodeUrl, refresh);
         if (dynamicMirrors.length > 0) {
           mirrors = dynamicMirrors;
         }

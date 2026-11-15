@@ -55,10 +55,12 @@ export function unpackDeanEdwards(packedHtml: string): string {
 
 /**
  * Mengekstrak URL stream langsung (.m3u8 atau .mp4) dari halaman iframe/player.
+ * Dibatasi maksimal 3500ms agar 1 mirror yang lambat tidak menghambat mirror lainnya.
  */
 export async function extractDirectStream(
   playerUrl: string,
-  referer: string
+  referer: string,
+  timeoutMs = 3500
 ): Promise<ExtractedStream | null> {
   if (!isSafeAllowedStreamUrl(playerUrl)) {
     return null;
@@ -70,7 +72,7 @@ export async function extractDirectStream(
         "User-Agent": SERVER_CONFIG.chromeUserAgent,
         Referer: referer,
       },
-      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!response.ok) return null;
