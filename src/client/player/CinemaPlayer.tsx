@@ -50,6 +50,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [internalServerIdx, setInternalServerIdx] = useState(0);
   const activeIndex = activeOptionIndex ?? internalServerIdx;
@@ -69,6 +70,52 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   const [countdown, setCountdown] = useState<number | null>(null);
 
   const activeOption = options[activeIndex] || options[0];
+
+  // Mouse activity & 5-second auto-hide controls timer
+  const handleMouseMove = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    controlsTimeoutRef.current = setTimeout(() => {
+      setShowControls(false);
+    }, 5000);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    if (isPlaying) {
+      setShowControls(false);
+    }
+  }, [isPlaying]);
+
+  // Restart 5s hide timer when video begins playing, or keep visible when paused
+  useEffect(() => {
+    if (isPlaying) {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+      controlsTimeoutRef.current = setTimeout(() => {
+        setShowControls(false);
+      }, 5000);
+    } else {
+      setShowControls(true);
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+    }
+  }, [isPlaying]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Auto-next binge countdown timer
   useEffect(() => {
@@ -399,8 +446,11 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   return (
     <div
       ref={containerRef}
-      onMouseMove={() => setShowControls(true)}
-      className="relative w-full aspect-video bg-[#09090B] rounded-poster overflow-hidden border border-line select-none group"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      className={`relative w-full aspect-video bg-[#09090B] rounded-poster overflow-hidden border border-line select-none group ${
+        !showControls && isPlaying ? "cursor-none" : ""
+      }`}
     >
       {/* Loading Mirrors Overlay (Condition A) */}
       {isLoadingMirrors && (
