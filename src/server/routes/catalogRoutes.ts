@@ -4,7 +4,12 @@ import { CURATED_ANIME_CATALOG } from "../providers/curatedProvider.js";
 import { ExternalHtmlScraperProvider } from "../providers/externalProvider.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { fetchAniSkipIntervals } from "../services/aniskip.js";
-import { fetchAniListTrending, enrichCatalogArtwork, queryAniListCatalog } from "../services/anilist.js";
+import {
+  fetchAniListTrending,
+  fetchAniListById,
+  enrichCatalogArtwork,
+  queryAniListCatalog,
+} from "../services/anilist.js";
 import { resolveEpisodeStreams } from "../services/streamResolver.js";
 
 export const catalogRouter = Router();
@@ -31,18 +36,44 @@ async function getUnifiedCatalog(forceRefresh = false) {
 // GET /api/catalog (or /api/anime)
 catalogRouter.get("/", async (req: Request, res: Response) => {
   const search = typeof req.query.search === "string" ? req.query.search.toLowerCase().trim() : "";
-  const genre = typeof req.query.genre === "string" ? req.query.genre.trim() : "";
   const status = typeof req.query.status === "string" ? req.query.status.toUpperCase().trim() : "";
   const season = typeof req.query.season === "string" ? req.query.season.toUpperCase().trim() : "";
   const sort = typeof req.query.sort === "string" ? req.query.sort : "score";
   const forceRefresh = req.query.refresh === "true";
 
-  // Sync multi-source providers
-  const allItems = await getUnifiedCatalog(forceRefresh);
-  let items = [...allItems];
+  const rawGenres =
+    typeof req.query.genres === "string"
+      ? req.query.genres
+      : typeof req.query.genre === "string"
+        ? req.query.genre
+        : "";
+  const selectedGenres = rawGenres
+    .split(",")
+    .map((g) => g.trim())
+    .filter(Boolean);
+
+  const page = Math.max(Number.parseInt(String(req.query.page ?? "1"), 10) || 1, 1);
+  const perPage = Math.min(
+    Math.max(Number.parseInt(String(req.query.perPage ?? "24"), 10) || 24, 1),
+    50
+  );
+
+  // Dynamic AniList query with Isekai MediaTag & pagination support
+  const anilistResult = await queryAniListCatalog({
+    search: search || undefined,
+    genres: selectedGenres,
+    status: status || undefined,
+    sort,
+    page,
+    perPage,
+  });
+
+  // On page 1 or when filtering, also evaluate curated catalog for fast offline-safe matching
+  const enrichedCurated = await enrichCatalogArtwork(CURATED_ANIME_CATALOG);
+  let curatedCandidates = [...enrichedCurated];
 
   if (search) {
-    items = items.filter(
+    curatedCandidates = curatedCandidates.filter(
       (a) =>
         a.title.romaji.toLowerCase().includes(search) ||
         a.title.english?.toLowerCase().includes(search) ||
@@ -50,18 +81,29 @@ catalogRouter.get("/", async (req: Request, res: Response) => {
     );
   }
 
-  if (genre) {
-    items = items.filter((a) => a.genres.some((g) => g.toLowerCase() === genre.toLowerCase()));
-  }
-
   if (status) {
-    items = items.filter((a) => a.status === status);
+    curatedCandidates = curatedCandidates.filter((a) => a.status === status);
   }
 
   if (season) {
-    items = items.filter((a) => a.season === season);
+    curatedCandidates = curatedCandidates.filter((a) => a.season === season);
   }
 
+  // Merge curated and AniList results
+  const basePool = page === 1 ? [...curatedCandidates, ...anilistResult.items] : anilistResult.items;
+  const mergedItems = await aggregator.syncAllProviders(basePool, forceRefresh);
+  let items = [...mergedItems];
+
+  // Apply Strict Multi-Genre AND (Irisan) Filter: every requested genre must be present
+  if (selectedGenres.length > 0) {
+    items = items.filter((anime) =>
+      selectedGenres.every((targetGenre) =>
+        anime.genres.some((ag) => ag.toLowerCase() === targetGenre.toLowerCase())
+      )
+    );
+  }
+
+  // Sort
   if (sort === "score") {
     items.sort((a, b) => b.score - a.score);
   } else if (sort === "year") {
@@ -70,9 +112,16 @@ catalogRouter.get("/", async (req: Request, res: Response) => {
     items.sort((a, b) => a.title.romaji.localeCompare(b.title.romaji));
   }
 
+  const effectiveTotal = Math.max(items.length, anilistResult.pageInfo.total);
+
   res.json({
     ok: true,
-    total: items.length,
+    total: effectiveTotal,
+    pageInfo: {
+      ...anilistResult.pageInfo,
+      total: effectiveTotal,
+      currentPage: page,
+    },
     items,
   });
 });
@@ -82,11 +131,12 @@ catalogRouter.get("/search-anilist", async (req: Request, res: Response) => {
   const search = typeof req.query.q === "string" ? req.query.q : "";
   const genre = typeof req.query.genre === "string" ? req.query.genre : "";
 
-  const results = await queryAniListCatalog({ search, genre });
+  const { items, pageInfo } = await queryAniListCatalog({ search, genre });
   res.json({
     ok: true,
-    total: results.length,
-    results,
+    total: items.length,
+    pageInfo,
+    results: items,
   });
 });
 
@@ -197,9 +247,21 @@ catalogRouter.get("/:idOrSlug", async (req: Request, res: Response) => {
   const route = aggregator.resolveRoute(idOrSlug);
 
   const allItems = await getUnifiedCatalog();
-  const found = allItems.find(
+  let found = allItems.find(
     (a) => a.id === idOrSlug || a.slug === idOrSlug || (route && a.id === route.animeId)
   );
+
+  // If not found in local cache and ID starts with al- (e.g. al-151847), fetch dynamically from AniList
+  if (!found && idOrSlug.startsWith("al-")) {
+    const anilistId = Number.parseInt(idOrSlug.replace(/^al-/, ""), 10);
+    if (Number.isFinite(anilistId) && anilistId > 0) {
+      const directAnime = await fetchAniListById(anilistId);
+      if (directAnime) {
+        aggregator.registerCatalog([directAnime]);
+        found = directAnime;
+      }
+    }
+  }
 
   if (!found) {
     res.status(404).json({ ok: false, error: "Anime not found" });

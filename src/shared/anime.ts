@@ -2,6 +2,31 @@ export type StreamMode = "mp4" | "hls" | "embed";
 export type VideoQuality = "1080p" | "720p" | "480p" | "360p";
 export type AnimeStatus = "RELEASING" | "FINISHED" | "NOT_YET_RELEASED";
 
+export const ALL_ANIME_GENRES = [
+  "Action",
+  "Adventure",
+  "Fantasy",
+  "Sci-Fi",
+  "Romance",
+  "Comedy",
+  "Drama",
+  "Horror",
+  "Mystery",
+  "Slice of Life",
+  "Sports",
+  "Mecha",
+  "Isekai",
+] as const;
+
+export type AnimeGenre = (typeof ALL_ANIME_GENRES)[number];
+
+export interface PageInfo {
+  total: number;
+  currentPage: number;
+  lastPage: number;
+  hasNextPage: boolean;
+}
+
 export interface PlaybackOption {
   id: string;
   providerId: string;

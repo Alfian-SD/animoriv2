@@ -364,4 +364,62 @@ export const CURATED_ANIME_CATALOG: Anime[] = [
     },
     episodes: makeEpisodes("spy-x-family", 12),
   },
+  {
+    id: "kanojo-ga-koushaku-tei-ni-itta-riyuu",
+    slug: "kanojo-ga-koushaku-tei-ni-itta-riyuu",
+    malId: 52308,
+    anilistId: 151847,
+    sourceProvider: "curated",
+    title: {
+      romaji: "Kanojo ga Koushaku-tei ni Itta Riyuu",
+      english: "Why Raeliana Ended Up at the Duke's Mansion",
+      native: "彼女が公爵邸に行った理由",
+    },
+    synopsis:
+      "Setelah kematian misteriusnya, Park Eunha terlahir kembali sebagai Raeliana McMillan, karakter novel yang ditakdirkan dibunuh tunangannya sendiri. Demi mengubah takdir kelam itu, ia membuat kesepakatan rahasia dengan Duke Noah Wynknight.",
+    status: "FINISHED",
+    seasonYear: 2023,
+    season: "SPRING",
+    score: 7.4,
+    genres: ["Isekai", "Romance", "Comedy", "Fantasy", "Mystery"],
+    studio: "TYPHOON GRAPHICS",
+    artwork: {
+      motif: "sun",
+      primaryHue: 280,
+      posterUrl:
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151847-OnTYbvb4y4mp.jpg",
+      backdropUrl:
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/151847-S1pTlfRY2DqB.jpg",
+    },
+    episodes: makeEpisodes("kanojo-ga-koushaku-tei-ni-itta-riyuu", 12),
+  },
+  {
+    id: "otome-game-hametsu-flag",
+    slug: "otome-game-no-hametsu-flag",
+    malId: 38555,
+    anilistId: 104647,
+    sourceProvider: "curated",
+    title: {
+      romaji: "Otome Game no Hametsu Flag shika Nai Akuyaku Reijou ni Tensei shiteshimatta...",
+      english: "My Next Life as a Villainess: All Routes Lead to Doom!",
+      native: "乙女ゲームの破滅フラグしかない悪役令嬢に転生してしまった…",
+    },
+    synopsis:
+      "Katarina Claes, putri bangsawan muda, tersadar bahwa dirinya bereinkarnasi sebagai tokoh antagonis utama dalam game otome kesukaannya yang hanya memiliki akhir pengasingan atau kematian. Ia pun berusaha sekuat tenaga menghindari semua bendera kehancuran tersebut.",
+    status: "FINISHED",
+    seasonYear: 2020,
+    season: "SPRING",
+    score: 7.3,
+    genres: ["Isekai", "Romance", "Comedy", "Fantasy", "Slice of Life"],
+    studio: "SILVER LINK.",
+    artwork: {
+      motif: "waves",
+      primaryHue: 110,
+      posterUrl:
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx104647-dMGZSavRxHcM.jpg",
+      backdropUrl:
+        "https://s4.anilist.co/file/anilistcdn/media/anime/banner/104647-emIYPiyZZJnl.jpg",
+    },
+    episodes: makeEpisodes("otome-game-hametsu-flag", 12),
+  },
 ];

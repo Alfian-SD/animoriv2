@@ -104,4 +104,17 @@ describe("Express API Integration", () => {
     expect(body.episodeId).toBe("frieren-beyond-journeys-end-ep-1");
     expect(Array.isArray(body.skipIntervals)).toBe(true);
   });
+
+  it("GET /api/catalog?genres=Isekai,Romance strictly returns anime matching both genres (AND intersection)", async () => {
+    const res = await fetch(`${baseUrl}/api/catalog?genres=Isekai,Romance`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.items.length).toBeGreaterThanOrEqual(2);
+    for (const item of body.items) {
+      const lowerGenres = item.genres.map((g: string) => g.toLowerCase());
+      expect(lowerGenres).toContain("isekai");
+      expect(lowerGenres).toContain("romance");
+    }
+  });
 });
