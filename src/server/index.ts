@@ -90,8 +90,8 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-// Only start listening if executed directly (e.g., via tsx)
-if (process.env.NODE_ENV !== "test") {
+// Only start listening if executed directly (e.g., via tsx) and not on serverless platforms like Vercel
+if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) {
   app.listen(SERVER_CONFIG.port, () => {
     console.log(`[animoriv2] Server running on http://localhost:${SERVER_CONFIG.port}`);
   });
