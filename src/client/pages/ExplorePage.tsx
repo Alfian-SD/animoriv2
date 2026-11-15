@@ -7,12 +7,18 @@ import { SearchIcon } from "../ui/icons.js";
 interface ExplorePageProps {
   catalog?: Anime[];
   onSelectAnime: (anime: Anime) => void;
+  initialSearch?: string;
+  onSearchChange?: (query: string) => void;
 }
 
-export const ExplorePage: React.FC<ExplorePageProps> = ({ onSelectAnime }) => {
+export const ExplorePage: React.FC<ExplorePageProps> = ({
+  onSelectAnime,
+  initialSearch = "",
+  onSearchChange,
+}) => {
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState("All");
   const [sortBy, setSortBy] = useState<"score" | "year" | "title">("score");
 
@@ -26,6 +32,14 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ onSelectAnime }) => {
   // Sentinel ref for infinite scroll IntersectionObserver
   const sentinelRef = useRef<HTMLDivElement>(null);
 
+  // Sync state if initialSearch prop changes (e.g. from popstate or URL changes)
+  useEffect(() => {
+    if (initialSearch !== undefined && initialSearch !== searchQuery) {
+      setSearchQuery(initialSearch);
+      setDebouncedSearch(initialSearch);
+    }
+  }, [initialSearch]);
+
   // Debounce search input (350ms)
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -33,6 +47,29 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ onSelectAnime }) => {
     }, 350);
     return () => clearTimeout(handler);
   }, [searchQuery]);
+
+  // Synchronize URL to /src/:keywordSlug or back to /explore
+  useEffect(() => {
+    const slug = debouncedSearch
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+
+    if (slug) {
+      const targetUrl = `/src/${slug}`;
+      if (window.location.pathname !== targetUrl) {
+        window.history.replaceState(null, "", targetUrl);
+      }
+    } else {
+      if (window.location.pathname.startsWith("/src/")) {
+        window.history.replaceState(null, "", "/explore");
+      }
+    }
+    if (onSearchChange) {
+      onSearchChange(debouncedSearch);
+    }
+  }, [debouncedSearch, onSearchChange]);
 
   // Full Server-Side Query on filter / search / sort changes
   useEffect(() => {

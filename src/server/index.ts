@@ -36,19 +36,30 @@ app.use("/api/anime", catalogRouter);
 app.get("/api/episodes/:episodeId/skip-times", handleSkipTimes);
 app.use("/api/streams", streamRouter);
 
-// Production static file serving & SPA fallback
+// Static file serving & SPA fallback for non-API routes (/home, /explore, /src/*, /:animeSlug)
 const clientDistPath = path.resolve(process.cwd(), "dist/client");
-if (process.env.NODE_ENV === "production" && fs.existsSync(clientDistPath)) {
-  app.use(express.static(clientDistPath));
+const clientDistIndex = path.resolve(clientDistPath, "index.html");
+const clientSrcIndex = path.resolve(process.cwd(), "src/client/index.html");
 
-  app.get("*", (req: Request, res: Response, next: NextFunction) => {
-    if (req.path.startsWith("/api/")) {
-      next();
-      return;
-    }
-    res.sendFile(path.join(clientDistPath, "index.html"));
-  });
+if (fs.existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath));
 }
+
+app.get("*", (req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith("/api/")) {
+    next();
+    return;
+  }
+  if (fs.existsSync(clientDistIndex)) {
+    res.sendFile(clientDistIndex);
+    return;
+  }
+  if (fs.existsSync(clientSrcIndex)) {
+    res.sendFile(clientSrcIndex);
+    return;
+  }
+  next();
+});
 
 // 404 Handler
 app.use((_req: Request, res: Response) => {

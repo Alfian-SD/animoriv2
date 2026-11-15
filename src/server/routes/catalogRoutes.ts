@@ -519,6 +519,26 @@ catalogRouter.get("/:idOrSlug", async (req: Request, res: Response) => {
 
   let found = await resolveAnimeEntity(idOrSlug);
 
+  // Resolusi slug saat refresh (GET /api/anime/:idOrSlug):
+  // Jika belum ada di memori, cari via AniList dengan keyword dari slug
+  if (!found) {
+    const keyword = idOrSlug.replace(/-/g, " ").trim();
+    if (keyword.length > 0) {
+      try {
+        const { items } = await queryAniListCatalog({ search: keyword, perPage: 5 });
+        if (items && items.length > 0) {
+          aggregator.registerCatalog(items);
+          const match = items.find((a) => a.slug === idOrSlug || a.id === idOrSlug) || items[0];
+          if (match) {
+            found = match;
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to resolve slug via AniList search:", err);
+      }
+    }
+  }
+
   if (!found) {
     res.status(404).json({ ok: false, error: "Anime not found" });
     return;
