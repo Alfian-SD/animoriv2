@@ -189,12 +189,18 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
             <div
               key={anime.id}
               onClick={() => onSelectAnime(anime)}
-              className="min-w-[150px] sm:min-w-[180px] flex-shrink-0 cursor-pointer group"
+              className="w-[165px] sm:w-[185px] lg:w-[200px] shrink-0 cursor-pointer group"
             >
               <div className="relative aspect-[2/3] mb-2 rounded-poster overflow-hidden">
                 <Artwork anime={anime} aspect="poster" />
                 {/* Minimal Rank Stamp */}
-                <div className="absolute top-2 left-2 bg-surface/90 border border-line text-xs font-mono px-2 py-0.5 rounded-control text-text">
+                <div
+                  className={`absolute top-2 left-2 text-xs font-mono px-2 py-0.5 rounded-control ${
+                    idx === 0
+                      ? "bg-accent text-[#09090B] font-semibold border border-accent"
+                      : "bg-surface/90 border border-line text-text"
+                  }`}
+                >
                   #{idx + 1}
                 </div>
               </div>
