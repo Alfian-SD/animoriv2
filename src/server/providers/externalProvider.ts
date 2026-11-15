@@ -42,13 +42,15 @@ export function normalizeQuality(raw: string): VideoQuality {
 }
 
 export function extractSlugFromHref(rawHref = ""): string {
-  return (
-    rawHref
-      .replace(/^https?:\/\/[^/]+/i, "")
-      .replace(/^\/+|\/+$/g, "")
-      .split("/")
-      .pop() ?? ""
-  );
+  const withoutHashOrQuery = rawHref.split("#")[0]?.split("?")[0] ?? "";
+  const clean = withoutHashOrQuery
+    .replace(/^https?:\/\/[^/]+/i, "")
+    .replace(/^\/+|\/+$/g, "");
+  const slug = clean.split("/").pop()?.trim() ?? "";
+  if (!slug || slug === "nonton" || slug === "watch" || slug.startsWith("#")) {
+    return "";
+  }
+  return slug;
 }
 
 /**
@@ -205,7 +207,10 @@ export class OtakudesuProvider implements CatalogProvider {
 
       $(".venz ul li, .rapi ul li").each((index, el) => {
         const title = $(el).find(".jdlflm, h2, a").first().text().trim();
-        const href = $(el).find("a").first().attr("href") ?? "";
+        const href =
+          $(el).find('a[href^="http"]:not([href*="#nonton"])').first().attr("href") ??
+          $(el).find("a").first().attr("href") ??
+          "";
         const posterUrl = $(el).find("img").attr("src");
         const epText = $(el).find(".epz").text().trim();
         const slug = extractSlugFromHref(href);
@@ -434,7 +439,10 @@ export class NimegamiProvider implements CatalogProvider {
 
       $("article, .bsx, .listupd .bs").each((index, el) => {
         const title = $(el).find(".tt, h2, a").first().text().trim();
-        const href = $(el).find("a").first().attr("href") ?? "";
+        const href =
+          $(el).find('a[href^="http"]:not([href*="#nonton"])').first().attr("href") ??
+          $(el).find("a").first().attr("href") ??
+          "";
         const posterUrl =
           $(el).find("img").attr("src") || $(el).find("img").attr("data-src");
         const slug = extractSlugFromHref(href);

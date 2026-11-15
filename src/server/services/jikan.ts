@@ -6,6 +6,7 @@ import { formatSeasonLabel } from "./anilist.js";
 
 const JIKAN_API_BASE = "https://api.jikan.moe/v4";
 const JIKAN_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes TTL
+const JIKAN_TIMEOUT_MS = Math.min(SERVER_CONFIG.metadataTimeoutMs, 3500);
 
 export interface JikanQueryParams {
   search?: string;
@@ -253,7 +254,7 @@ export async function queryJikanCatalog(
         Accept: "application/json",
         "User-Agent": SERVER_CONFIG.chromeUserAgent,
       },
-      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      signal: AbortSignal.timeout(JIKAN_TIMEOUT_MS),
     });
 
     if (response.status === 429) {
@@ -263,7 +264,7 @@ export async function queryJikanCatalog(
           Accept: "application/json",
           "User-Agent": SERVER_CONFIG.chromeUserAgent,
         },
-        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+        signal: AbortSignal.timeout(JIKAN_TIMEOUT_MS),
       });
     }
 
@@ -333,7 +334,7 @@ export async function fetchJikanById(malId: number): Promise<Anime | null> {
         Accept: "application/json",
         "User-Agent": SERVER_CONFIG.chromeUserAgent,
       },
-      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      signal: AbortSignal.timeout(JIKAN_TIMEOUT_MS),
     });
 
     if (response.status === 429) {
@@ -343,7 +344,7 @@ export async function fetchJikanById(malId: number): Promise<Anime | null> {
           Accept: "application/json",
           "User-Agent": SERVER_CONFIG.chromeUserAgent,
         },
-        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+        signal: AbortSignal.timeout(JIKAN_TIMEOUT_MS),
       });
     }
 
@@ -381,7 +382,7 @@ export async function fetchJikanSeasons(malId: number): Promise<RelatedSeason[]>
         Accept: "application/json",
         "User-Agent": SERVER_CONFIG.chromeUserAgent,
       },
-      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      signal: AbortSignal.timeout(JIKAN_TIMEOUT_MS),
     });
 
     if (response.status === 429) {
@@ -391,7 +392,7 @@ export async function fetchJikanSeasons(malId: number): Promise<RelatedSeason[]>
           Accept: "application/json",
           "User-Agent": SERVER_CONFIG.chromeUserAgent,
         },
-        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+        signal: AbortSignal.timeout(JIKAN_TIMEOUT_MS),
       });
     }
 
@@ -522,7 +523,7 @@ export async function fetchJikanSeasonNow(): Promise<{
         Accept: "application/json",
         "User-Agent": SERVER_CONFIG.chromeUserAgent,
       },
-      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      signal: AbortSignal.timeout(JIKAN_TIMEOUT_MS),
     });
     if (response.status === 429) {
       await new Promise((r) => setTimeout(r, 1000));
@@ -531,7 +532,7 @@ export async function fetchJikanSeasonNow(): Promise<{
           Accept: "application/json",
           "User-Agent": SERVER_CONFIG.chromeUserAgent,
         },
-        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+        signal: AbortSignal.timeout(JIKAN_TIMEOUT_MS),
       });
     }
     if (response.ok) {

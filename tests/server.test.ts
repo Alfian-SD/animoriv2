@@ -384,4 +384,34 @@ describe("Express API Integration", { timeout: 15000 }, () => {
     expect(prevSeason.seasonYear).toBeLessThanOrEqual(season2.seasonYear ?? 2026);
     expect(seasons[0].anilistId).toBe(97940); // Original Black Clover Season 1 is in the chain
   });
+
+  it("resolves dynamic anime episode mirrors without 404 and provides guaranteed playable servers", async () => {
+    // Dynamic query for Tsukimichi S2 (al-159518)
+    const res = await fetch(`${baseUrl}/api/anime/al-159518/episodes/al-159518-ep-1/mirrors`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.animeId).toBe("al-159518");
+    expect(body.episodeNumber).toBe(1);
+    expect(Array.isArray(body.mirrors)).toBe(true);
+    expect(body.mirrors.length).toBeGreaterThanOrEqual(2);
+    expect(body.mirrors[0].serverName).toBe("Server 1");
+    expect(body.mirrors[1].serverName).toBe("Server 2");
+  });
+
+  it("returns 200 OK without 404 on AniSkip skip-times across /api/catalog/episodes and /api/episodes", async () => {
+    // 1. /api/catalog/episodes/:episodeId/skip-times
+    const resCatalog = await fetch(`${baseUrl}/api/catalog/episodes/al-159518-ep-1/skip-times`);
+    expect(resCatalog.status).toBe(200);
+    const bodyCatalog = await resCatalog.json();
+    expect(bodyCatalog.ok).toBe(true);
+    expect(Array.isArray(bodyCatalog.skipIntervals)).toBe(true);
+
+    // 2. /api/episodes/:episodeId/skip-times
+    const resDirect = await fetch(`${baseUrl}/api/episodes/al-159518-ep-1/skip-times`);
+    expect(resDirect.status).toBe(200);
+    const bodyDirect = await resDirect.json();
+    expect(bodyDirect.ok).toBe(true);
+    expect(Array.isArray(bodyDirect.skipIntervals)).toBe(true);
+  });
 });

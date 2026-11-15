@@ -52,9 +52,12 @@ export class CatalogAggregator {
   public registerCatalog(items: Anime[]): Anime[] {
     const seenNormalizedTitles = new Map<string, Anime>();
     const seenAniListIds = new Map<number, Anime>();
+    const seenIds = new Set<string>();
     const deduplicated: Anime[] = [];
 
     for (const anime of items) {
+      if (!anime || !anime.id) continue;
+
       // 1. Strict Anti-Donghua gate: buang semua animasi asal China
       if (
         anime.countryOfOrigin === "CN" ||
@@ -63,6 +66,12 @@ export class CatalogAggregator {
       ) {
         continue;
       }
+
+      // Pastikan deduplikasi ID unik: jangan izinkan dua anime dengan ID kembar
+      if (seenIds.has(anime.id)) {
+        continue;
+      }
+      seenIds.add(anime.id);
 
       const now = Date.now();
       const entry: RouteEntry = {

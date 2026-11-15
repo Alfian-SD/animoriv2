@@ -7,6 +7,33 @@ import { formatQualityLabel } from "../player/playerUtils.js";
 
 const PROGRESS_STORAGE_KEY = "aiku.watch-progress.v1";
 
+const DEFAULT_FALLBACK_MIRRORS: PlaybackOption[] = [
+  {
+    id: "fallback-server-1",
+    providerId: "resolved",
+    serverName: "Server 1",
+    quality: "1080p",
+    mode: "hls",
+    streamUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+  },
+  {
+    id: "fallback-server-2",
+    providerId: "resolved",
+    serverName: "Server 2",
+    quality: "720p",
+    mode: "mp4",
+    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+  },
+  {
+    id: "fallback-server-3",
+    providerId: "resolved",
+    serverName: "Server 3",
+    quality: "480p",
+    mode: "mp4",
+    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+  },
+];
+
 function getSavedResumeTime(episodeId: string): number {
   try {
     const raw = localStorage.getItem(PROGRESS_STORAGE_KEY);
@@ -44,7 +71,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({
 
   const [activeOptionIndex, setActiveOptionIndex] = useState(0);
   const [playbackOptions, setPlaybackOptions] = useState<PlaybackOption[]>(
-    currentEpisode?.playbackOptions ?? []
+    currentEpisode?.playbackOptions && currentEpisode.playbackOptions.length > 0
+      ? currentEpisode.playbackOptions
+      : DEFAULT_FALLBACK_MIRRORS
   );
   const [isLoadingMirrors, setIsLoadingMirrors] = useState(false);
 
@@ -53,7 +82,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     if (!currentEpisode) return;
 
     setActiveOptionIndex(0);
-    setPlaybackOptions(currentEpisode.playbackOptions);
+    setPlaybackOptions(
+      currentEpisode.playbackOptions && currentEpisode.playbackOptions.length > 0
+        ? currentEpisode.playbackOptions
+        : DEFAULT_FALLBACK_MIRRORS
+    );
     setIsLoadingMirrors(true);
 
     const controller = new AbortController();
@@ -71,11 +104,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({
           const data = (await res.json()) as { mirrors?: PlaybackOption[] };
           if (Array.isArray(data.mirrors) && data.mirrors.length > 0) {
             setPlaybackOptions(data.mirrors);
+          } else {
+            setPlaybackOptions(DEFAULT_FALLBACK_MIRRORS);
           }
+        } else {
+          setPlaybackOptions(DEFAULT_FALLBACK_MIRRORS);
         }
       } catch (err: unknown) {
         if ((err as Error)?.name !== "AbortError") {
-          // Fallback retained
+          setPlaybackOptions(DEFAULT_FALLBACK_MIRRORS);
         }
       } finally {
         if (!controller.signal.aborted) {

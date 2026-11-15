@@ -58,7 +58,7 @@ function stripHtmlTags(raw?: string | null): string {
   return raw.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
 }
 
-function buildPlayableEpisodes(animeId: string, count: number): Episode[] {
+export function buildPlayableEpisodes(animeId: string, count: number): Episode[] {
   const total = Math.min(Math.max(count || 12, 1), 24);
   return Array.from({ length: total }, (_, idx) => {
     const epNum = idx + 1;
@@ -471,7 +471,7 @@ export async function fetchAniListById(anilistId: number): Promise<Anime | null>
 
   const query = `
     query ($id: Int) {
-      Media(id: $id, type: ANIME, isAdult: false) {
+      Media(id: $id, isAdult: false) {
         id
         idMal
         countryOfOrigin

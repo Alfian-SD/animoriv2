@@ -40,6 +40,13 @@ describe("External Scraper & Stream Extractor", () => {
     ).toBe("frieren-sub-indo");
   });
 
+  it("cleans query strings and hash fragments in extractSlugFromHref and rejects standalone anchors", () => {
+    expect(extractSlugFromHref("https://nimegami.id/some-anime/#nonton")).toBe("some-anime");
+    expect(extractSlugFromHref("#nonton")).toBe("");
+    expect(extractSlugFromHref("https://nimegami.id/another-anime?param=1#nonton")).toBe("another-anime");
+    expect(extractSlugFromHref("https://nimegami.id/#watch")).toBe("");
+  });
+
   it("sorts resolved playback mirrors from highest to lowest resolution", () => {
     const unsorted: PlaybackOption[] = [
       {

@@ -3,7 +3,7 @@ import cors from "cors";
 import path from "node:path";
 import fs from "node:fs";
 import { SERVER_CONFIG } from "./config.js";
-import { catalogRouter } from "./routes/catalogRoutes.js";
+import { catalogRouter, handleSkipTimes } from "./routes/catalogRoutes.js";
 import { streamRouter } from "./routes/streamRoutes.js";
 import { AppError } from "../shared/errors.js";
 
@@ -33,6 +33,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
 // Mount API Routes
 app.use("/api/catalog", catalogRouter);
 app.use("/api/anime", catalogRouter);
+app.get("/api/episodes/:episodeId/skip-times", handleSkipTimes);
 app.use("/api/streams", streamRouter);
 
 // Production static file serving & SPA fallback
