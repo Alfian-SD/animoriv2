@@ -31,8 +31,6 @@ export interface CinemaPlayerProps {
   onNextEpisode?: () => void;
   onRetry?: () => void;
   isLoadingMirrors?: boolean;
-  retryCount?: number;
-  maxRetries?: number;
 }
 
 export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
@@ -48,8 +46,6 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
   onNextEpisode,
   onRetry,
   isLoadingMirrors = false,
-  retryCount = 0,
-  maxRetries = 3,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -345,11 +341,6 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
 
   if (!options || options.length === 0 || !activeOption) {
     if (isLoadingMirrors) {
-      const subtitle =
-        retryCount > 0
-          ? `Mencari server cadangan... (percobaan ${retryCount}/${maxRetries})`
-          : "Menghubungkan ke sumber streaming...";
-
       return (
         <div
           ref={containerRef}
@@ -362,7 +353,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
                 Menyiapkan server video...
               </p>
               <p className="text-xs text-text-3 font-mono">
-                {subtitle}
+                Menghubungkan ke sumber streaming...
               </p>
             </div>
           </div>
@@ -386,7 +377,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => (onRetry ? onRetry() : window.location.reload())}
+              onClick={() => (onRetry ? onRetry() : undefined)}
             >
               Coba muat ulang
             </Button>
@@ -421,9 +412,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
                 Menyiapkan server video...
               </p>
               <p className="text-xs text-text-3 font-mono">
-                {retryCount > 0
-                  ? `Mencari server cadangan... (percobaan ${retryCount}/${maxRetries})`
-                  : "Menghubungkan ke sumber streaming..."}
+                Menghubungkan ke sumber streaming...
               </p>
             </div>
           </div>

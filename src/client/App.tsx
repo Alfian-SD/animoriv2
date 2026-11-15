@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { Anime } from "@shared/anime.js";
 import { HomePage } from "./pages/HomePage.js";
 import { ExplorePage } from "./pages/ExplorePage.js";
@@ -25,6 +25,7 @@ export const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>("home");
   const [searchKeyword, setSearchKeyword] = useState<string>("");
   const [catalog, setCatalog] = useState<Anime[]>([]);
+  const catalogRef = useRef<Anime[]>([]);
   const [archiveTotal, setArchiveTotal] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [loadingAnimeDetails, setLoadingAnimeDetails] = useState(false);
@@ -78,7 +79,7 @@ export const App: React.FC = () => {
         isWatch = true;
       }
 
-      const activeList = catalogList ?? catalog;
+      const activeList = catalogList ?? catalogRef.current;
       const cached = activeList.find(
         (a) => a.slug === animeSlug || a.id === animeSlug || getAnimeCleanSlug(a) === animeSlug
       );
@@ -117,7 +118,7 @@ export const App: React.FC = () => {
       window.history.replaceState(null, "", "/home");
       setView("home");
     },
-    [catalog]
+    []
   );
 
   // Popstate listener for browser Back / Forward buttons
@@ -131,7 +132,7 @@ export const App: React.FC = () => {
     };
   }, [syncRouteFromLocation]);
 
-  // Initial route sync and catalog fetch
+  // Initial route sync and catalog fetch (runs once on mount)
   useEffect(() => {
     async function loadCatalog() {
       try {
@@ -147,6 +148,7 @@ export const App: React.FC = () => {
             ...item,
             slug: getAnimeCleanSlug(item),
           }));
+          catalogRef.current = normalized;
           setCatalog(normalized);
           const total =
             typeof data.archiveTotal === "number" && data.archiveTotal > 0
@@ -167,7 +169,7 @@ export const App: React.FC = () => {
       }
     }
     loadCatalog();
-  }, [syncRouteFromLocation]);
+  }, []);
 
   const handleNavHome = () => {
     setView("home");

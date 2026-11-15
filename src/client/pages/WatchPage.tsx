@@ -49,81 +49,51 @@ export const WatchPage: React.FC<WatchPageProps> = ({
       : []
   );
   const [isLoadingMirrors, setIsLoadingMirrors] = useState(true);
-  const [retryCount, setRetryCount] = useState(0);
 
-  const MAX_RETRIES = 3;
-  const RETRY_DELAY_MS = 2500;
-
-  const fetchMirrorsWithRetry = async (signal?: AbortSignal, forceRefresh = false) => {
+  const fetchMirrors = async (signal?: AbortSignal, forceRefresh = false) => {
     if (!currentEpisode) return;
     setIsLoadingMirrors(true);
-    setRetryCount(0);
 
-    let attempt = 0;
-    while (!signal?.aborted) {
-      try {
-        const queryParams = new URLSearchParams();
-        if (attempt > 0 || forceRefresh) {
-          queryParams.set("refresh", "true");
-        }
-        const qs = queryParams.toString() ? `?${queryParams.toString()}` : "";
-        const res = await fetch(
-          `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
-            currentEpisode.id
-          )}/mirrors${qs}`,
-          { signal }
-        );
+    try {
+      const queryParams = new URLSearchParams();
+      if (forceRefresh) {
+        queryParams.set("refresh", "true");
+      }
+      const qs = queryParams.toString() ? `?${queryParams.toString()}` : "";
+      const res = await fetch(
+        `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
+          currentEpisode.id
+        )}/mirrors${qs}`,
+        { signal }
+      );
 
-        if (res.ok) {
-          const data = (await res.json()) as { mirrors?: PlaybackOption[] };
-          if (Array.isArray(data.mirrors) && data.mirrors.length > 0) {
-            setPlaybackOptions(data.mirrors);
-            setActiveOptionIndex(0);
-            setIsLoadingMirrors(false);
-            setRetryCount(0);
+      if (res.ok) {
+        const data = (await res.json()) as { mirrors?: PlaybackOption[] };
+        if (Array.isArray(data.mirrors) && data.mirrors.length > 0) {
+          setPlaybackOptions(data.mirrors);
+          setActiveOptionIndex(0);
 
-            // Background prefetch for next episode (Episode N + 1)
-            const nextEp = anime.episodes.find((ep) => ep.number === currentEpisode.number + 1);
-            if (nextEp) {
-              fetch(
-                `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
-                  nextEp.id
-                )}/mirrors`
-              ).catch(() => {});
-            }
-            return;
+          // Background prefetch for next episode (Episode N + 1)
+          const nextEp = anime.episodes.find((ep) => ep.number === currentEpisode.number + 1);
+          if (nextEp) {
+            fetch(
+              `/api/anime/${encodeURIComponent(anime.id)}/episodes/${encodeURIComponent(
+                nextEp.id
+              )}/mirrors`
+            ).catch(() => {});
           }
-        }
-      } catch (err: unknown) {
-        if ((err as Error)?.name === "AbortError") {
           return;
         }
       }
-
-      attempt += 1;
-      if (attempt > MAX_RETRIES) {
-        break;
-      }
-
-      setRetryCount(attempt);
-
-      // Jeda 2.5 detik antar-percobaan auto-refresh
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, RETRY_DELAY_MS);
-        signal?.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timer);
-            resolve();
-          },
-          { once: true }
-        );
-      });
-    }
-
-    if (!signal?.aborted) {
       setPlaybackOptions([]);
-      setIsLoadingMirrors(false);
+    } catch (err: unknown) {
+      if ((err as Error)?.name !== "AbortError") {
+        setPlaybackOptions([]);
+      }
+    } finally {
+      if (!signal?.aborted) {
+        setIsLoadingMirrors(false);
+      }
     }
   };
 
@@ -139,7 +109,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     );
 
     const controller = new AbortController();
-    void fetchMirrorsWithRetry(controller.signal);
+    void fetchMirrors(controller.signal);
 
     return () => {
       controller.abort();
@@ -185,10 +155,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({
             theaterMode={theaterMode}
             onToggleTheater={() => setTheaterMode(!theaterMode)}
             onNextEpisode={hasNext ? () => onSelectEpisode(episodeNumber + 1) : undefined}
-            onRetry={() => void fetchMirrorsWithRetry(undefined, true)}
+            onRetry={() => void fetchMirrors(undefined, true)}
             isLoadingMirrors={isLoadingMirrors}
-            retryCount={retryCount}
-            maxRetries={MAX_RETRIES}
           />
 
           {/* Mirror & Server Selection Bar */}
