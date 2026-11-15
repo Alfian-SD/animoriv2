@@ -4,7 +4,7 @@ import { CURATED_ANIME_CATALOG } from "../providers/curatedProvider.js";
 import { ExternalHtmlScraperProvider } from "../providers/externalProvider.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { fetchAniSkipIntervals } from "../services/aniskip.js";
-import { queryAniListCatalog } from "../services/anilist.js";
+import { fetchAniListTrending, queryAniListCatalog } from "../services/anilist.js";
 
 export const catalogRouter = Router();
 export const aggregator = new CatalogAggregator();
@@ -18,6 +18,12 @@ if (externalScraperUrl && isSafeAllowedStreamUrl(externalScraperUrl)) {
 // Initial sync with curated catalog
 aggregator.registerCatalog(CURATED_ANIME_CATALOG);
 
+// Helper to get all combined catalog items with AniList trending enrichment
+async function getUnifiedCatalog(forceRefresh = false) {
+  const anilistItems = await fetchAniListTrending(18);
+  return aggregator.syncAllProviders([...CURATED_ANIME_CATALOG, ...anilistItems], forceRefresh);
+}
+
 // GET /api/catalog (or /api/anime)
 catalogRouter.get("/", async (req: Request, res: Response) => {
   const search = typeof req.query.search === "string" ? req.query.search.toLowerCase().trim() : "";
@@ -28,7 +34,7 @@ catalogRouter.get("/", async (req: Request, res: Response) => {
   const forceRefresh = req.query.refresh === "true";
 
   // Sync multi-source providers
-  const allItems = await aggregator.syncAllProviders(CURATED_ANIME_CATALOG, forceRefresh);
+  const allItems = await getUnifiedCatalog(forceRefresh);
   let items = [...allItems];
 
   if (search) {
@@ -85,7 +91,7 @@ catalogRouter.get("/episodes/:episodeId/skip-times", async (req: Request, res: R
   const rawEpisodeId = req.params.episodeId;
   const episodeId = (Array.isArray(rawEpisodeId) ? rawEpisodeId[0] : rawEpisodeId) ?? "";
 
-  const allItems = await aggregator.syncAllProviders(CURATED_ANIME_CATALOG);
+  const allItems = await getUnifiedCatalog();
   const targetAnime = allItems.find((a) =>
     a.episodes.some((ep) => ep.id === episodeId)
   );
@@ -116,7 +122,7 @@ catalogRouter.get("/:idOrSlug/episodes/:episodeId/mirrors", async (req: Request,
   const episodeId = (Array.isArray(rawEpisodeId) ? rawEpisodeId[0] : rawEpisodeId) ?? "";
 
   const route = aggregator.resolveRoute(idOrSlug);
-  const allItems = await aggregator.syncAllProviders(CURATED_ANIME_CATALOG);
+  const allItems = await getUnifiedCatalog();
 
   const anime = allItems.find(
     (a) => a.id === idOrSlug || a.slug === idOrSlug || (route && a.id === route.animeId)
@@ -169,7 +175,7 @@ catalogRouter.get("/:idOrSlug", async (req: Request, res: Response) => {
   const idOrSlug = (Array.isArray(rawId) ? rawId[0] : rawId) ?? "";
   const route = aggregator.resolveRoute(idOrSlug);
 
-  const allItems = await aggregator.syncAllProviders(CURATED_ANIME_CATALOG);
+  const allItems = await getUnifiedCatalog();
   const found = allItems.find(
     (a) => a.id === idOrSlug || a.slug === idOrSlug || (route && a.id === route.animeId)
   );

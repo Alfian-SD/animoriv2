@@ -32,46 +32,46 @@ describe("Express API Integration", () => {
     expect(body.service).toBe("animoriv2-api");
   });
 
-  it("GET /api/catalog returns 12 curated anime", async () => {
+  it("GET /api/catalog returns curated anime", async () => {
     const res = await fetch(`${baseUrl}/api/catalog`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.total).toBe(12);
-    expect(body.items.length).toBe(12);
+    expect(body.total).toBeGreaterThanOrEqual(12);
+    expect(body.items.length).toBeGreaterThanOrEqual(12);
   });
 
   it("GET /api/catalog with search and genre filters works correctly", async () => {
-    const resSearch = await fetch(`${baseUrl}/api/catalog?search=kurogane`);
+    const resSearch = await fetch(`${baseUrl}/api/catalog?search=frieren`);
     expect(resSearch.status).toBe(200);
     const bodySearch = await resSearch.json();
     expect(bodySearch.ok).toBe(true);
     expect(bodySearch.items.length).toBeGreaterThanOrEqual(1);
-    expect(bodySearch.items[0].title.romaji).toContain("Kurogane");
+    expect(bodySearch.items[0].title.romaji).toContain("Frieren");
 
-    const resGenre = await fetch(`${baseUrl}/api/catalog?genre=Sci-Fi`);
+    const resGenre = await fetch(`${baseUrl}/api/catalog?genre=Fantasy`);
     expect(resGenre.status).toBe(200);
     const bodyGenre = await resGenre.json();
     expect(bodyGenre.ok).toBe(true);
-    expect(bodyGenre.items.every((a: { genres: string[] }) => a.genres.includes("Sci-Fi"))).toBe(true);
+    expect(bodyGenre.items.every((a: { genres: string[] }) => a.genres.includes("Fantasy"))).toBe(true);
   });
 
   it("GET /api/anime/:id returns single anime details via O(1) route", async () => {
-    const res = await fetch(`${baseUrl}/api/anime/kurogane-meridian`);
+    const res = await fetch(`${baseUrl}/api/anime/frieren-beyond-journeys-end`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.anime.id).toBe("kurogane-meridian");
+    expect(body.anime.id).toBe("frieren-beyond-journeys-end");
     expect(body.anime.episodes.length).toBeGreaterThan(0);
   });
 
   it("GET /api/anime/:id/episodes/:episodeId/mirrors returns mirrors and handles 404", async () => {
     // Valid curated anime episode
-    const resValid = await fetch(`${baseUrl}/api/anime/kurogane-meridian/episodes/kurogane-meridian-ep-1/mirrors`);
+    const resValid = await fetch(`${baseUrl}/api/anime/frieren-beyond-journeys-end/episodes/frieren-beyond-journeys-end-ep-1/mirrors`);
     expect(resValid.status).toBe(200);
     const bodyValid = await resValid.json();
     expect(bodyValid.ok).toBe(true);
-    expect(bodyValid.animeId).toBe("kurogane-meridian");
+    expect(bodyValid.animeId).toBe("frieren-beyond-journeys-end");
     expect(bodyValid.episodeNumber).toBe(1);
     expect(Array.isArray(bodyValid.mirrors)).toBe(true);
     expect(bodyValid.mirrors.length).toBeGreaterThan(0);
@@ -81,7 +81,7 @@ describe("Express API Integration", () => {
     expect(resMissingAnime.status).toBe(404);
 
     // Non-existent episode on existing anime
-    const resMissingEp = await fetch(`${baseUrl}/api/anime/kurogane-meridian/episodes/non-existent-ep/mirrors`);
+    const resMissingEp = await fetch(`${baseUrl}/api/anime/frieren-beyond-journeys-end/episodes/non-existent-ep/mirrors`);
     expect(resMissingEp.status).toBe(404);
   });
 
@@ -93,11 +93,11 @@ describe("Express API Integration", () => {
   });
 
   it("GET /api/catalog/episodes/:episodeId/skip-times returns skip times envelope", async () => {
-    const res = await fetch(`${baseUrl}/api/catalog/episodes/kurogane-meridian-ep-1/skip-times`);
+    const res = await fetch(`${baseUrl}/api/catalog/episodes/frieren-beyond-journeys-end-ep-1/skip-times`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.episodeId).toBe("kurogane-meridian-ep-1");
+    expect(body.episodeId).toBe("frieren-beyond-journeys-end-ep-1");
     expect(Array.isArray(body.skipIntervals)).toBe(true);
   });
 });
