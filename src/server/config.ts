@@ -15,5 +15,9 @@ export const SERVER_CONFIG = {
     "nimegami.id",
     "berkasdrive.com",
     "samehadaku.email",
+    "ylnime.com",
+    "www.ylnime.com",
+    "animeverse.id",
+    "animekita.org",
   ]),
 } as const;

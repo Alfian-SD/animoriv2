@@ -475,7 +475,7 @@ export const CinemaPlayer: React.FC<CinemaPlayerProps> = ({
               >
                 {options.map((opt, idx) => (
                   <option key={opt.id} value={idx}>
-                    {opt.serverName} ({opt.quality})
+                    {opt.serverName} · {opt.quality}
                   </option>
                 ))}
               </select>

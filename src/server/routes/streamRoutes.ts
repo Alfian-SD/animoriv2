@@ -37,6 +37,14 @@ export function rewriteHlsManifest(
 }
 
 function resolveUpstreamReferer(targetUrl: string): string {
+  if (
+    targetUrl.includes("ylnime.com") ||
+    targetUrl.includes("ylnime") ||
+    targetUrl.includes("animeverse.id") ||
+    targetUrl.includes("animekita.org")
+  ) {
+    return "http://ylnime.com/";
+  }
   if (targetUrl.includes("nimegami") || targetUrl.includes("berkasdrive")) {
     return "https://nimegami.id/";
   }

@@ -75,6 +75,10 @@ describe("Express API Integration", () => {
     expect(bodyValid.episodeNumber).toBe(1);
     expect(Array.isArray(bodyValid.mirrors)).toBe(true);
     expect(bodyValid.mirrors.length).toBeGreaterThan(0);
+    expect(bodyValid.mirrors[0].serverName).toBe("Server 1");
+    for (const m of bodyValid.mirrors) {
+      expect(m.serverName).toMatch(/^Server \d+$/);
+    }
 
     // Non-existent anime
     const resMissingAnime = await fetch(`${baseUrl}/api/anime/non-existent-anime/episodes/ep-1/mirrors`);

@@ -5,6 +5,7 @@ import { ExternalHtmlScraperProvider } from "../providers/externalProvider.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { fetchAniSkipIntervals } from "../services/aniskip.js";
 import { fetchAniListTrending, enrichCatalogArtwork, queryAniListCatalog } from "../services/anilist.js";
+import { resolveEpisodeStreams } from "../services/streamResolver.js";
 
 export const catalogRouter = Router();
 export const aggregator = new CatalogAggregator();
@@ -144,8 +145,19 @@ catalogRouter.get("/:idOrSlug/episodes/:episodeId/mirrors", async (req: Request,
 
   let mirrors = episode.playbackOptions;
 
-  // Resolve external mirrors dynamically if applicable
-  if (anime.sourceProvider !== "curated") {
+  // Resolve episode streams dynamically across multi-sources (ylnime -> otakudesu -> nimegami)
+  const resolved = await resolveEpisodeStreams({
+    animeTitle: anime.title.romaji,
+    animeRomaji: anime.title.romaji,
+    animeEnglish: anime.title.english,
+    slug: anime.slug,
+    episodeNumber: episode.number,
+  });
+
+  if (resolved.length > 0) {
+    mirrors = resolved;
+  } else if (anime.sourceProvider !== "curated") {
+    // Fallback to provider instance if available
     const provider = aggregator.getProvider(anime.sourceProvider);
     if (provider) {
       const episodeUrl =
@@ -163,12 +175,18 @@ catalogRouter.get("/:idOrSlug/episodes/:episodeId/mirrors", async (req: Request,
     }
   }
 
+  // Strict anonymization: always "Server 1", "Server 2", "Server 3"
+  const anonymizedMirrors = mirrors.map((m, idx) => ({
+    ...m,
+    serverName: `Server ${idx + 1}`,
+  }));
+
   res.json({
     ok: true,
     animeId: anime.id,
     episodeId: episode.id,
     episodeNumber: episode.number,
-    mirrors,
+    mirrors: anonymizedMirrors,
   });
 });
 

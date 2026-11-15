@@ -46,25 +46,7 @@ function buildPlayableEpisodes(animeId: string, count: number): Episode[] {
       number: epNum,
       title: `Episode ${epNum}`,
       durationMinutes: 24,
-      playbackOptions: [
-        {
-          id: `${epId}-hls-1080`,
-          providerId: "anilist",
-          serverName: "Yoake Stream",
-          quality: "1080p",
-          mode: "hls",
-          streamUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-        },
-        {
-          id: `${epId}-mp4-720`,
-          providerId: "anilist",
-          serverName: "Backup CDN",
-          quality: "720p",
-          mode: "mp4",
-          streamUrl:
-            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-        },
-      ],
+      playbackOptions: [],
     };
   });
 }
