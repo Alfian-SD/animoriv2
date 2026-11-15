@@ -1,5 +1,6 @@
-import type { Anime, Episode, PageInfo } from "../../shared/anime.js";
+import type { Anime, Episode, PageInfo, RelatedSeason } from "../../shared/anime.js";
 import { SERVER_CONFIG } from "../config.js";
+import { CURATED_ANIME_CATALOG } from "../providers/curatedProvider.js";
 
 const ANILIST_ENDPOINT = "https://graphql.anilist.co";
 
@@ -741,4 +742,295 @@ export async function enrichScrapedItemsWithAniList(items: Anime[]): Promise<Ani
   }
 
   return results;
+}
+
+// In-memory cache for anime related seasons (TTL 1 hour per anilistId)
+const animeSeasonsCache = new Map<number, { seasons: RelatedSeason[]; expiresAt: number }>();
+const SEASONS_CACHE_TTL_MS = 60 * 60 * 1000;
+
+function cleanBaseTitle(title = ""): string {
+  return title
+    .toLowerCase()
+    .replace(
+      /\s*(the\s*final\s*season|final\s*season|season\s*\d+|part\s*\d+|2nd\s*season|3rd\s*season|4th\s*season|the\s*movie|gekijouban)\b.*$/gi,
+      ""
+    )
+    .replace(/\s*(sub(?:title)?\s*indo(?:nesia)?|bd|batch|ova|ona|s\d+)\b.*$/gi, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function formatSeasonLabel(rawTitle: string, index: number, total: number): string {
+  const lower = rawTitle.toLowerCase();
+  if (lower.includes("the final season") || lower.includes("final season")) {
+    if (lower.includes("part 3") || lower.includes("kanketsu-hen")) return "Final Season Part 3";
+    if (lower.includes("part 2")) return "Final Season Part 2";
+    return "Final Season";
+  }
+  const seasonPartMatch = lower.match(/season\s*(\d+)\s*part\s*(\d+)/i);
+  if (seasonPartMatch) {
+    return `Season ${seasonPartMatch[1]} Part ${seasonPartMatch[2]}`;
+  }
+  const seasonMatch = lower.match(/(?:season|s)\s*(\d+)/i);
+  if (seasonMatch) {
+    return `Season ${seasonMatch[1]}`;
+  }
+  if (
+    lower.includes("movie") ||
+    lower.includes("the movie") ||
+    lower.includes("gekijouban") ||
+    lower.includes("zenpen") ||
+    lower.includes("kouhen") ||
+    lower.includes("chronicle")
+  ) {
+    return "Movie";
+  }
+  if (index === 0 && total > 1) {
+    return "Season 1";
+  }
+  return `Season ${index + 1}`;
+}
+
+export async function fetchAnimeSeasons(anime: Anime): Promise<RelatedSeason[]> {
+  const anilistId =
+    anime.anilistId ??
+    CURATED_ANIME_CATALOG.find((c) => c.id === anime.id || c.slug === anime.slug)?.anilistId;
+
+  if (!anilistId) {
+    return [];
+  }
+
+  const now = Date.now();
+  const cached = animeSeasonsCache.get(anilistId);
+  if (cached && cached.expiresAt > now) {
+    return cached.seasons.map((s) => ({
+      ...s,
+      isCurrent: s.anilistId === anilistId || s.id === anime.id,
+    }));
+  }
+
+  const baseTitle = cleanBaseTitle(anime.title.romaji || anime.title.english || "");
+
+  const query = `
+    query ($id: Int, $search: String) {
+      Media(id: $id, type: ANIME) {
+        id
+        format
+        countryOfOrigin
+        seasonYear
+        episodes
+        title { romaji english }
+        coverImage { large extraLarge }
+        relations {
+          edges {
+            relationType
+            node {
+              id
+              type
+              format
+              countryOfOrigin
+              seasonYear
+              episodes
+              title { romaji english }
+              coverImage { large extraLarge }
+            }
+          }
+        }
+      }
+      Page(page: 1, perPage: 12) {
+        media(search: $search, type: ANIME, countryOfOrigin: JP) {
+          id
+          type
+          format
+          countryOfOrigin
+          seasonYear
+          episodes
+          title { romaji english }
+          coverImage { large extraLarge }
+        }
+      }
+    }
+  `;
+
+  try {
+    const response = await fetch(ANILIST_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": SERVER_CONFIG.chromeUserAgent,
+      },
+      body: JSON.stringify({
+        query,
+        variables: { id: anilistId, search: baseTitle || undefined },
+      }),
+      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const payload = (await response.json()) as {
+      data?: {
+        Media?: {
+          id: number;
+          format?: string | null;
+          countryOfOrigin?: string | null;
+          seasonYear?: number | null;
+          episodes?: number | null;
+          title?: { romaji?: string; english?: string | null };
+          coverImage?: { large?: string | null; extraLarge?: string | null };
+          relations?: {
+            edges?: Array<{
+              relationType?: string;
+              node?: {
+                id: number;
+                type?: string;
+                format?: string | null;
+                countryOfOrigin?: string | null;
+                seasonYear?: number | null;
+                episodes?: number | null;
+                title?: { romaji?: string; english?: string | null };
+                coverImage?: { large?: string | null; extraLarge?: string | null };
+              };
+            }>;
+          };
+        };
+        Page?: {
+          media?: Array<{
+            id: number;
+            type?: string;
+            format?: string | null;
+            countryOfOrigin?: string | null;
+            seasonYear?: number | null;
+            episodes?: number | null;
+            title?: { romaji?: string; english?: string | null };
+            coverImage?: { large?: string | null; extraLarge?: string | null };
+          }>;
+        };
+      };
+    };
+
+    const targetMedia = payload.data?.Media;
+    if (!targetMedia || targetMedia.countryOfOrigin === "CN") {
+      return [];
+    }
+
+    const candidateMap = new Map<
+      number,
+      {
+        id: number;
+        title: string;
+        seasonYear?: number;
+        episodesCount?: number;
+        posterUrl?: string;
+      }
+    >();
+
+    // 1. Current media node
+    candidateMap.set(targetMedia.id, {
+      id: targetMedia.id,
+      title: targetMedia.title?.romaji || targetMedia.title?.english || anime.title.romaji,
+      seasonYear: targetMedia.seasonYear ?? anime.seasonYear,
+      episodesCount: targetMedia.episodes ?? anime.episodes.length,
+      posterUrl:
+        targetMedia.coverImage?.extraLarge ??
+        targetMedia.coverImage?.large ??
+        anime.artwork.posterUrl,
+    });
+
+    // 2. Add relation edges
+    const allowedRelations = new Set([
+      "PREQUEL",
+      "SEQUEL",
+      "PARENT",
+      "ALTERNATIVE",
+      "SIDE_STORY",
+    ]);
+    const allowedFormats = new Set(["TV", "TV_SHORT", "MOVIE"]);
+
+    const edges = targetMedia.relations?.edges ?? [];
+    for (const edge of edges) {
+      const node = edge.node;
+      if (!node) continue;
+      if (node.type !== "ANIME" || !node.format || !allowedFormats.has(node.format)) {
+        continue;
+      }
+      if (node.countryOfOrigin === "CN") continue;
+      if (edge.relationType && !allowedRelations.has(edge.relationType)) continue;
+
+      const titleRomaji = node.title?.romaji || "";
+      const normNode = cleanBaseTitle(titleRomaji);
+      if (baseTitle && !normNode.includes(baseTitle) && !baseTitle.includes(normNode)) {
+        if (edge.relationType !== "PREQUEL" && edge.relationType !== "SEQUEL") continue;
+      }
+
+      if (!candidateMap.has(node.id)) {
+        candidateMap.set(node.id, {
+          id: node.id,
+          title: node.title?.romaji || node.title?.english || `Season ${candidateMap.size + 1}`,
+          seasonYear: node.seasonYear ?? undefined,
+          episodesCount: node.episodes ?? undefined,
+          posterUrl: node.coverImage?.extraLarge ?? node.coverImage?.large ?? undefined,
+        });
+      }
+    }
+
+    // 3. Add search results matching base title
+    const searchMedia = payload.data?.Page?.media ?? [];
+    for (const m of searchMedia) {
+      if (m.type !== "ANIME" || !m.format || !allowedFormats.has(m.format)) continue;
+      if (m.countryOfOrigin === "CN") continue;
+
+      const normTitle = cleanBaseTitle(m.title?.romaji || "");
+      if (baseTitle && !normTitle.includes(baseTitle) && !baseTitle.includes(normTitle)) {
+        continue;
+      }
+
+      if (!candidateMap.has(m.id)) {
+        candidateMap.set(m.id, {
+          id: m.id,
+          title: m.title?.romaji || m.title?.english || "",
+          seasonYear: m.seasonYear ?? undefined,
+          episodesCount: m.episodes ?? undefined,
+          posterUrl: m.coverImage?.extraLarge ?? m.coverImage?.large ?? undefined,
+        });
+      }
+    }
+
+    // 4. Sort chronologically: by seasonYear ascending, then id ascending
+    const sortedCandidates = Array.from(candidateMap.values()).sort(
+      (a, b) => (a.seasonYear ?? 0) - (b.seasonYear ?? 0) || a.id - b.id
+    );
+
+    // 5. Generate natural season labels and internal IDs
+    const total = sortedCandidates.length;
+    const finalSeasons: RelatedSeason[] = sortedCandidates.map((c, index) => {
+      const curatedMatch = CURATED_ANIME_CATALOG.find(
+        (ca) => ca.anilistId === c.id || (ca.id === anime.id && c.id === anilistId)
+      );
+      const internalId = curatedMatch ? curatedMatch.id : `al-${c.id}`;
+
+      return {
+        id: internalId,
+        anilistId: c.id,
+        title: c.title,
+        seasonLabel: formatSeasonLabel(c.title, index, total),
+        seasonYear: c.seasonYear,
+        episodesCount: c.episodesCount,
+        posterUrl: c.posterUrl,
+        isCurrent: c.id === anilistId || internalId === anime.id,
+      };
+    });
+
+    animeSeasonsCache.set(anilistId, {
+      seasons: finalSeasons,
+      expiresAt: now + SEASONS_CACHE_TTL_MS,
+    });
+
+    return finalSeasons;
+  } catch {
+    return [];
+  }
 }

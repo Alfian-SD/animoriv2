@@ -27,6 +27,17 @@ export interface PageInfo {
   hasNextPage: boolean;
 }
 
+export interface RelatedSeason {
+  id: string; // ID internal, misal ID curated jika cocok atau "al-{anilistId}"
+  anilistId: number;
+  title: string;
+  seasonLabel: string; // Format natural, misal "Season 1", "Season 2", "Final Season"
+  seasonYear?: number;
+  episodesCount?: number;
+  posterUrl?: string;
+  isCurrent?: boolean;
+}
+
 export interface PlaybackOption {
   id: string;
   providerId: string;
@@ -84,6 +95,7 @@ export interface Anime {
     backdropUrl?: string;
   };
   episodes: Episode[];
+  seasons?: RelatedSeason[];
 }
 
 export interface WatchProgress {

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import type { Anime } from "@shared/anime.js";
+import type { Anime, RelatedSeason } from "@shared/anime.js";
 import { Artwork } from "../ui/art.js";
 import { Button } from "../ui/components.js";
 import { PlayIcon, BookmarkIcon, CheckIcon } from "../ui/icons.js";
@@ -20,6 +20,34 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
   onBack,
 }) => {
   const [inWatchlist, setInWatchlist] = useState(false);
+
+  const handleSeasonClick = async (season: RelatedSeason) => {
+    if (season.id === anime.id || season.anilistId === anime.anilistId) return;
+
+    // Check catalog cache first for instant switch
+    const cached = catalog.find(
+      (a) => a.id === season.id || (season.anilistId && a.anilistId === season.anilistId)
+    );
+    if (cached) {
+      onSelectAnime(cached);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    // Fetch details from server
+    try {
+      const res = await fetch(`/api/anime/${season.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && data.anime) {
+          onSelectAnime(data.anime);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load season anime:", err);
+    }
+  };
 
   const related = catalog.filter(
     (a) => a.id !== anime.id && a.genres.some((g) => anime.genres.includes(g))
@@ -122,12 +150,89 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
 
       {/* Main Grid: Episodes list + Sticky Facts Sidebar */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
-        {/* Episodes List (Col 8) */}
-        <div className="md:col-span-8 space-y-4">
-          <div className="flex items-center justify-between border-b border-line pb-3">
-            <h2 className="font-serif text-2xl text-text">Episodes</h2>
-            <span className="text-xs text-text-3">{anime.episodes.length} episodes released</span>
-          </div>
+        {/* Main Left Column (Col 8) */}
+        <div className="md:col-span-8 space-y-8">
+          {/* Seasons Section (Above Episodes) */}
+          {anime.seasons && anime.seasons.length > 1 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-line pb-3">
+                <h2 className="font-serif text-2xl text-text">Seasons</h2>
+                <span className="text-xs text-text-3 font-mono">
+                  {anime.seasons.length} seasons available
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {anime.seasons.map((season) => {
+                  const isActive =
+                    season.isCurrent ||
+                    season.id === anime.id ||
+                    (Boolean(anime.anilistId) && season.anilistId === anime.anilistId);
+
+                  return (
+                    <div
+                      key={season.id || season.anilistId}
+                      onClick={() => handleSeasonClick(season)}
+                      className={`p-2.5 rounded-poster border transition-colors flex items-center gap-3 cursor-pointer group bg-surface select-none ${
+                        isActive
+                          ? "border-accent bg-surface-2"
+                          : "border-line hover:border-text-3 hover:bg-surface-2/60"
+                      }`}
+                    >
+                      {/* Small poster thumbnail */}
+                      <div className="w-10 h-14 aspect-[2/3] shrink-0 rounded-control overflow-hidden border border-line bg-surface-2 relative">
+                        {season.posterUrl ? (
+                          <img
+                            src={season.posterUrl}
+                            alt={season.seasonLabel}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-text-3 text-[10px] font-mono">
+                            ★
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Label and Info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`text-xs font-semibold truncate ${
+                              isActive ? "text-accent" : "text-text group-hover:text-accent"
+                            }`}
+                          >
+                            {season.seasonLabel}
+                          </span>
+                          {isActive && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-accent/15 text-accent border border-accent/30 shrink-0">
+                              Current
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-text-3 truncate mt-0.5 font-mono">
+                          {season.seasonYear ? `${season.seasonYear}` : ""}
+                          {season.seasonYear && season.episodesCount ? " · " : ""}
+                          {season.episodesCount ? `${season.episodesCount} episodes` : ""}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Episodes List */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <h2 className="font-serif text-2xl text-text">Episodes</h2>
+              <span className="text-xs text-text-3">{anime.episodes.length} episodes released</span>
+            </div>
 
           <div className="space-y-2">
             {anime.episodes.map((ep) => (
@@ -158,6 +263,7 @@ export const DetailsPage: React.FC<DetailsPageProps> = ({
             ))}
           </div>
         </div>
+      </div>
 
         {/* Sticky Facts Sidebar (Col 4) */}
         <div className="md:col-span-4 bg-surface border border-line rounded-poster p-6 space-y-4 sticky top-6">

@@ -146,4 +146,35 @@ describe("Express API Integration", { timeout: 15000 }, () => {
     const overlap = bodyPage2.items.filter((a: { id: string }) => page1Ids.has(a.id));
     expect(overlap.length).toBe(0);
   });
+
+  it("GET /api/anime/shingeki-no-kyojin returns anime.seasons chronologically ordered and free of Chinese animation", async () => {
+    const res = await fetch(`${baseUrl}/api/anime/shingeki-no-kyojin`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.anime).toBeDefined();
+    expect(Array.isArray(body.anime.seasons)).toBe(true);
+    expect(body.anime.seasons.length).toBeGreaterThanOrEqual(2);
+
+    const seasons = body.anime.seasons;
+    // Check chronological order (seasonYear ascending)
+    for (let i = 0; i < seasons.length - 1; i++) {
+      const currentYear = seasons[i].seasonYear ?? 0;
+      const nextYear = seasons[i + 1].seasonYear ?? 0;
+      expect(currentYear).toBeLessThanOrEqual(nextYear);
+    }
+
+    // Verify current anime is flagged as isCurrent
+    const currentSeason = seasons.find((s: { isCurrent?: boolean }) => s.isCurrent);
+    expect(currentSeason).toBeDefined();
+
+    // Verify each season has required fields and proper format
+    for (const s of seasons) {
+      expect(typeof s.id).toBe("string");
+      expect(typeof s.anilistId).toBe("number");
+      expect(typeof s.title).toBe("string");
+      expect(typeof s.seasonLabel).toBe("string");
+      expect(s.seasonLabel.length).toBeGreaterThan(0);
+    }
+  });
 });

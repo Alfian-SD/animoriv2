@@ -15,6 +15,7 @@ import {
   enrichCatalogArtwork,
   queryAniListCatalog,
   getAniListArchiveStats,
+  fetchAnimeSeasons,
 } from "../services/anilist.js";
 import { resolveEpisodeStreams } from "../services/streamResolver.js";
 
@@ -312,6 +313,14 @@ catalogRouter.get("/:idOrSlug", async (req: Request, res: Response) => {
   if (!found) {
     res.status(404).json({ ok: false, error: "Anime not found" });
     return;
+  }
+
+  // Populate related seasons if not already present
+  if (!found.seasons || found.seasons.length === 0) {
+    const seasons = await fetchAnimeSeasons(found);
+    if (seasons.length > 0) {
+      found = { ...found, seasons };
+    }
   }
 
   res.json({ ok: true, anime: found });
