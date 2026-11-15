@@ -509,3 +509,50 @@ export async function fetchJikanSeasons(malId: number): Promise<RelatedSeason[]>
     return [];
   }
 }
+
+export async function fetchJikanSeasonNow(): Promise<{
+  trending: Anime[];
+  recentlyUpdated: Anime[];
+  currentSeason: Anime[];
+}> {
+  const url = `${JIKAN_API_BASE}/seasons/now?limit=25&sfw=true`;
+  try {
+    let response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": SERVER_CONFIG.chromeUserAgent,
+      },
+      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+    });
+    if (response.status === 429) {
+      await new Promise((r) => setTimeout(r, 1000));
+      response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+        },
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+    }
+    if (response.ok) {
+      const payload = (await response.json()) as { data?: JikanAnimeItem[] };
+      const valid = (payload.data ?? []).filter((item) => !isChineseJikanItem(item));
+      const animes = valid.map((item, idx) => mapJikanItemToAnime(item, idx));
+      return {
+        trending: animes.slice(0, 10),
+        recentlyUpdated: animes.slice(0, 8),
+        currentSeason: animes.slice(0, 12),
+      };
+    }
+  } catch (e) {
+    console.warn("fetchJikanSeasonNow error:", e);
+  }
+
+  // Final fallback to queryJikanCatalog
+  const jikanRes = await queryJikanCatalog({ page: 1, limit: 25 });
+  return {
+    trending: jikanRes.items.slice(0, 10),
+    recentlyUpdated: jikanRes.items.slice(0, 8),
+    currentSeason: jikanRes.items.slice(0, 12),
+  };
+}

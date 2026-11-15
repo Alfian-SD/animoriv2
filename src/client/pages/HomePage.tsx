@@ -18,10 +18,46 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
   const [isPaused, setIsPaused] = useState(false);
   const [continueWatching, setContinueWatching] = useState<Array<{ anime: Anime; progress: WatchProgress }>>([]);
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
+  const [homeData, setHomeData] = useState<{
+    trending: Anime[];
+    recentlyUpdated: Anime[];
+    currentSeason: Anime[];
+  } | null>(null);
 
-  // Hero anime pool
-  const heroItems = catalog.slice(0, 4);
-  const currentHero = heroItems[heroIdx] || catalog[0];
+  // Fetch real-time home highlights from AniList + Scrapers
+  useEffect(() => {
+    let isMounted = true;
+    async function loadHome() {
+      try {
+        const res = await fetch("/api/catalog/home");
+        if (res.ok) {
+          const json = await res.json();
+          if (isMounted && json.ok) {
+            setHomeData({
+              trending: json.trending || [],
+              recentlyUpdated: json.recentlyUpdated || [],
+              currentSeason: json.currentSeason || [],
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load /api/catalog/home:", err);
+      }
+    }
+    loadHome();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const trendingAnime =
+    homeData?.trending && homeData.trending.length > 0
+      ? homeData.trending
+      : [...catalog].sort((a, b) => b.score - a.score).slice(0, 10);
+
+  // Hero anime pool: use top 5 trending titles
+  const heroItems = trendingAnime.slice(0, 5);
+  const currentHero = heroItems[heroIdx] || heroItems[0] || catalog[0];
 
   // Automatic hero rotation (every 7 seconds, pausable, off under reduced motion)
   useEffect(() => {
@@ -34,6 +70,12 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
     }, 7000);
     return () => clearInterval(timer);
   }, [isPaused, heroItems.length]);
+
+  useEffect(() => {
+    if (heroIdx >= heroItems.length && heroItems.length > 0) {
+      setHeroIdx(0);
+    }
+  }, [heroItems.length, heroIdx]);
 
   // Load continue watching from localStorage
   useEffect(() => {
@@ -64,10 +106,17 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
     });
   };
 
-  const trendingAnime = [...catalog].sort((a, b) => b.score - a.score).slice(0, 10);
-  const recentlyUpdated = [...catalog].slice(0, 6);
-  const seasonalAnime = catalog.filter((a) => a.season === "FALL");
-  const recommendedAnime = catalog.filter((a) => a.score >= 9.0);
+  const recentlyUpdated =
+    homeData?.recentlyUpdated && homeData.recentlyUpdated.length > 0
+      ? homeData.recentlyUpdated
+      : catalog.slice(0, 8);
+
+  const seasonalAnime =
+    homeData?.currentSeason && homeData.currentSeason.length > 0
+      ? homeData.currentSeason
+      : catalog.filter((a) => a.season === "FALL");
+
+  const recommendedAnime = catalog.filter((a) => a.score >= 9.0).slice(0, 6);
 
   if (!currentHero) return null;
 
@@ -203,7 +252,17 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
         <h2 className="font-serif text-2xl text-text">Recently updated</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {recentlyUpdated.map((anime) => {
-            const latestEp = anime.episodes[anime.episodes.length - 1];
+            const latestEp =
+              anime.episodes && anime.episodes.length > 0
+                ? anime.episodes[anime.episodes.length - 1]
+                : null;
+            const epNumber = latestEp?.number || 1;
+            const epTitle =
+              latestEp?.title && latestEp.title !== "Episode"
+                ? latestEp.title
+                : `Episode ${epNumber}`;
+            const airDateText = latestEp?.airDate || "Recent broadcast";
+
             return (
               <div
                 key={anime.id}
@@ -215,15 +274,15 @@ export const HomePage: React.FC<HomePageProps> = ({ catalog, onSelectAnime, onWa
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-text truncate">{anime.title.romaji}</div>
-                  <div className="text-xs text-text-2 truncate">{latestEp?.title || `Episode ${latestEp?.number}`}</div>
-                  <div className="text-xs text-text-3 pt-1">{anime.studio} · {latestEp?.airDate || "Recent broadcast"}</div>
+                  <div className="text-xs text-text-2 truncate">{epTitle}</div>
+                  <div className="text-xs text-text-3 pt-1">{anime.studio} · {airDateText}</div>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (latestEp) onWatchEpisode(anime, latestEp.number);
+                    onWatchEpisode(anime, epNumber);
                   }}
                 >
                   <PlayIcon size={14} />

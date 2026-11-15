@@ -314,4 +314,33 @@ describe("Express API Integration", { timeout: 15000 }, () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("GET /api/catalog/home returns real-time trending, recentlyUpdated, and currentSeason free of Chinese animation", async () => {
+    const res = await fetch(`${baseUrl}/api/catalog/home`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+
+    expect(Array.isArray(body.trending)).toBe(true);
+    expect(body.trending.length).toBeGreaterThanOrEqual(1);
+
+    expect(Array.isArray(body.recentlyUpdated)).toBe(true);
+    expect(body.recentlyUpdated.length).toBeGreaterThanOrEqual(1);
+
+    expect(Array.isArray(body.currentSeason)).toBe(true);
+    expect(body.currentSeason.length).toBeGreaterThanOrEqual(1);
+
+    // Verify anti-donghua filter
+    for (const anime of [...body.trending, ...body.recentlyUpdated, ...body.currentSeason]) {
+      expect(anime.countryOfOrigin).not.toBe("CN");
+      expect(anime.genres.map((g: string) => g.toLowerCase())).not.toContain("donghua");
+    }
+
+    // Verify recentlyUpdated has valid episode information
+    const firstRecent = body.recentlyUpdated[0];
+    expect(firstRecent.episodes.length).toBeGreaterThanOrEqual(1);
+    const latestEp = firstRecent.episodes[firstRecent.episodes.length - 1];
+    expect(typeof latestEp.number).toBe("number");
+    expect(latestEp.number).toBeGreaterThanOrEqual(1);
+  });
 });

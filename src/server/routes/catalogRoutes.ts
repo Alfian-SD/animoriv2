@@ -6,6 +6,7 @@ import {
   OtakudesuProvider,
   NimegamiProvider,
   ExternalHtmlScraperProvider,
+  isChineseDonghua,
 } from "../providers/externalProvider.js";
 import { isSafeAllowedStreamUrl } from "../security/ssrfGuard.js";
 import { fetchAniSkipIntervals } from "../services/aniskip.js";
@@ -16,6 +17,7 @@ import {
   queryAniListCatalog,
   getAniListArchiveStats,
   fetchAnimeSeasons,
+  fetchHomeHighlights,
 } from "../services/anilist.js";
 import { fetchJikanById } from "../services/jikan.js";
 import { resolveEpisodeStreams } from "../services/streamResolver.js";
@@ -58,6 +60,53 @@ catalogRouter.get("/stats", async (_req: Request, res: Response) => {
   res.json({
     ok: true,
     archiveTotal: stats.total,
+  });
+});
+
+// GET /api/catalog/home (Real-time trending, recently updated, and current season)
+catalogRouter.get("/home", async (_req: Request, res: Response) => {
+  const highlights = await fetchHomeHighlights();
+
+  // Collect external scraper items from Otakudesu / Nimegami for latest episode updates
+  let externalRecent: Anime[] = [];
+  const providers = aggregator.getProviders();
+  if (providers.length > 0) {
+    const settled = await Promise.allSettled(providers.map((p) => p.fetchCatalog()));
+    for (const res of settled) {
+      if (res.status === "fulfilled" && Array.isArray(res.value)) {
+        externalRecent.push(...res.value);
+      }
+    }
+  }
+
+  // Filter anti-donghua on external items
+  externalRecent = externalRecent.filter(
+    (item) =>
+      item.countryOfOrigin !== "CN" &&
+      !isChineseDonghua(item.title.romaji, item.genres) &&
+      !isChineseDonghua(item.title.english ?? "", item.genres)
+  );
+
+  // Register live items to aggregator so routes and playback are instantly available
+  aggregator.registerCatalog([
+    ...highlights.trending,
+    ...highlights.recentlyUpdated,
+    ...highlights.currentSeason,
+    ...externalRecent,
+  ]);
+
+  // Combine recentlyUpdated: prepend external recent releases
+  // IMPORTANT: Do NOT inject CURATED_ANIME classics into trending or recentlyUpdated
+  const combinedRecentlyUpdated = [
+    ...externalRecent.slice(0, 4),
+    ...highlights.recentlyUpdated,
+  ].slice(0, 8);
+
+  res.json({
+    ok: true,
+    trending: highlights.trending,
+    recentlyUpdated: combinedRecentlyUpdated,
+    currentSeason: highlights.currentSeason,
   });
 });
 

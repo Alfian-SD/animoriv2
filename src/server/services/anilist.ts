@@ -1,7 +1,7 @@
 import type { Anime, Episode, PageInfo, RelatedSeason } from "../../shared/anime.js";
 import { SERVER_CONFIG } from "../config.js";
 import { CURATED_ANIME_CATALOG } from "../providers/curatedProvider.js";
-import { queryJikanCatalog, fetchJikanSeasons } from "./jikan.js";
+import { queryJikanCatalog, fetchJikanSeasons, fetchJikanSeasonNow } from "./jikan.js";
 
 const ANILIST_ENDPOINT = "https://graphql.anilist.co";
 
@@ -30,6 +30,10 @@ export interface AniListMedia {
   studios?: {
     nodes?: Array<{ name: string }>;
   };
+  nextAiringEpisode?: {
+    episode?: number | null;
+    airingAt?: number | null;
+  } | null;
 }
 
 export interface AniListQueryParams {
@@ -86,6 +90,18 @@ function mapAniListMediaToAnime(m: AniListMedia, index = 0): Anime {
     combinedGenres.push("Isekai");
   }
 
+  const latestReleased = m.nextAiringEpisode?.episode
+    ? Math.max(m.nextAiringEpisode.episode - 1, 1)
+    : null;
+  const episodeCount = latestReleased ?? m.episodes ?? 12;
+  const episodes = buildPlayableEpisodes(id, episodeCount);
+
+  const lastEp = episodes[episodes.length - 1];
+  if (lastEp && m.nextAiringEpisode?.airingAt) {
+    const lastAirDate = new Date((m.nextAiringEpisode.airingAt - 7 * 24 * 3600) * 1000);
+    lastEp.airDate = `Aired ${lastAirDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+  }
+
   return {
     id,
     slug: slug || id,
@@ -114,7 +130,7 @@ function mapAniListMediaToAnime(m: AniListMedia, index = 0): Anime {
       posterUrl,
       backdropUrl,
     },
-    episodes: buildPlayableEpisodes(id, m.episodes ?? 12),
+    episodes,
   };
 }
 
@@ -281,6 +297,167 @@ export async function fetchAniListTrending(perPage = 18): Promise<Anime[]> {
     return items;
   } catch {
     return cachedTrending ? cachedTrending.data : [];
+  }
+}
+
+export interface HomeHighlights {
+  trending: Anime[];
+  recentlyUpdated: Anime[];
+  currentSeason: Anime[];
+}
+
+let cachedHomeHighlights: { data: HomeHighlights; expiresAt: number } | null = null;
+const HOME_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+export async function fetchHomeHighlights(): Promise<HomeHighlights> {
+  const now = Date.now();
+  if (cachedHomeHighlights && cachedHomeHighlights.expiresAt > now) {
+    return cachedHomeHighlights.data;
+  }
+
+  const query = `
+    query {
+      trendingNow: Page(page: 1, perPage: 10) {
+        media(type: ANIME, countryOfOrigin: JP, sort: [TRENDING_DESC], isAdult: false) {
+          id
+          idMal
+          countryOfOrigin
+          title { romaji english native }
+          description(asHtml: false)
+          status
+          seasonYear
+          season
+          averageScore
+          episodes
+          genres
+          tags { name isMediaSpoiler }
+          coverImage { extraLarge large }
+          bannerImage
+          studios(isMain: true) {
+            nodes { name }
+          }
+          nextAiringEpisode {
+            episode
+            airingAt
+          }
+        }
+      }
+      recentlyUpdated: Page(page: 1, perPage: 8) {
+        media(type: ANIME, countryOfOrigin: JP, status: RELEASING, sort: [UPDATED_AT_DESC, TRENDING_DESC], isAdult: false) {
+          id
+          idMal
+          countryOfOrigin
+          title { romaji english native }
+          description(asHtml: false)
+          status
+          seasonYear
+          season
+          averageScore
+          episodes
+          genres
+          tags { name isMediaSpoiler }
+          coverImage { extraLarge large }
+          bannerImage
+          studios(isMain: true) {
+            nodes { name }
+          }
+          nextAiringEpisode {
+            episode
+            airingAt
+          }
+        }
+      }
+      currentSeason: Page(page: 1, perPage: 12) {
+        media(type: ANIME, countryOfOrigin: JP, season: FALL, seasonYear: 2026, sort: [POPULARITY_DESC], isAdult: false) {
+          id
+          idMal
+          countryOfOrigin
+          title { romaji english native }
+          description(asHtml: false)
+          status
+          seasonYear
+          season
+          averageScore
+          episodes
+          genres
+          tags { name isMediaSpoiler }
+          coverImage { extraLarge large }
+          bannerImage
+          studios(isMain: true) {
+            nodes { name }
+          }
+          nextAiringEpisode {
+            episode
+            airingAt
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    let response = await fetch(ANILIST_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": SERVER_CONFIG.chromeUserAgent,
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+    });
+
+    if (response.status === 429) {
+      await new Promise((r) => setTimeout(r, 1000));
+      response = await fetch(ANILIST_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": SERVER_CONFIG.chromeUserAgent,
+        },
+        body: JSON.stringify({ query }),
+        signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+      });
+    }
+
+    if (!response.ok) {
+      console.warn(`[anilist] fetchHomeHighlights status ${response.status}, falling back to Jikan...`);
+      return fetchJikanSeasonNow();
+    }
+
+    const payload = (await response.json()) as {
+      data?: {
+        trendingNow?: { media?: AniListMedia[] };
+        recentlyUpdated?: { media?: AniListMedia[] };
+        currentSeason?: { media?: AniListMedia[] };
+      };
+    };
+
+    const trendingRaw = (payload.data?.trendingNow?.media ?? []).filter((m) => m.countryOfOrigin !== "CN");
+    const recentRaw = (payload.data?.recentlyUpdated?.media ?? []).filter((m) => m.countryOfOrigin !== "CN");
+    const seasonRaw = (payload.data?.currentSeason?.media ?? []).filter((m) => m.countryOfOrigin !== "CN");
+
+    const trending = trendingRaw.map((m, idx) => mapAniListMediaToAnime(m, idx));
+    const recentlyUpdated = recentRaw.map((m, idx) => mapAniListMediaToAnime(m, idx));
+    const currentSeason = seasonRaw.map((m, idx) => mapAniListMediaToAnime(m, idx));
+
+    if (trending.length === 0 && recentlyUpdated.length === 0) {
+      console.warn("[anilist] fetchHomeHighlights empty results, falling back to Jikan...");
+      return fetchJikanSeasonNow();
+    }
+
+    const result: HomeHighlights = {
+      trending,
+      recentlyUpdated,
+      currentSeason,
+    };
+
+    cachedHomeHighlights = { data: result, expiresAt: now + HOME_CACHE_TTL_MS };
+    return result;
+  } catch (err) {
+    console.error("fetchHomeHighlights error, falling back to Jikan:", err);
+    return fetchJikanSeasonNow();
   }
 }
 
