@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { ALL_ANIME_GENRES, type Anime, type PageInfo } from "@shared/anime.js";
 import { FlipAnimeCard } from "../ui/FlipAnimeCard.js";
 import { Button } from "../ui/components.js";
 import { SearchIcon } from "../ui/icons.js";
 
 interface ExplorePageProps {
-  catalog: Anime[];
+  catalog?: Anime[];
   onSelectAnime: (anime: Anime) => void;
 }
 
-export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime }) => {
+export const ExplorePage: React.FC<ExplorePageProps> = ({ onSelectAnime }) => {
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -17,47 +17,34 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
   const [sortBy, setSortBy] = useState<"score" | "year" | "title">("score");
 
   const [page, setPage] = useState(1);
-  const [items, setItems] = useState<Anime[]>(catalog);
-  const [pageInfo, setPageInfo] = useState<PageInfo | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [items, setItems] = useState<Anime[]>([]);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [totalMatching, setTotalMatching] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  // Debounce search input
+  // Sentinel ref for infinite scroll IntersectionObserver
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Debounce search input (350ms)
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearch(searchQuery);
-    }, 300);
+    }, 350);
     return () => clearTimeout(handler);
   }, [searchQuery]);
 
-  // Track whether initial mount has happened
-  const isFirstMount = useRef(true);
-
-  // Fetch catalog on filter / search / sort changes
+  // Full Server-Side Query on filter / search / sort changes
   useEffect(() => {
     const abortController = new AbortController();
+    setIsLoading(true);
+    setPage(1);
 
-    async function fetchFilteredCatalog() {
-      // If first mount and we already have catalog from props and no filters, don't show full-page loading
-      if (
-        isFirstMount.current &&
-        catalog.length > 0 &&
-        selectedGenres.length === 0 &&
-        !debouncedSearch &&
-        statusFilter === "All" &&
-        sortBy === "score"
-      ) {
-        isFirstMount.current = false;
-      } else {
-        setIsLoading(true);
-      }
-
-      setPage(1);
-
+    async function fetchCatalogPage1() {
       try {
         const params = new URLSearchParams();
         params.set("page", "1");
-        params.set("perPage", "24");
+        params.set("perPage", "50");
         params.set("sort", sortBy);
 
         if (selectedGenres.length > 0) {
@@ -81,27 +68,31 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
         const data = await res.json();
         if (data.ok && Array.isArray(data.items)) {
           setItems(data.items);
-          setPageInfo(data.pageInfo ?? null);
+          setPage(1);
+          const pageInfo: PageInfo | undefined = data.pageInfo;
+          setHasNextPage(Boolean(pageInfo?.hasNextPage));
+          const effectiveCount = pageInfo?.total ?? data.total ?? data.items.length;
+          setTotalMatching(effectiveCount);
         }
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
-          console.error("Explore catalog fetch error:", err);
+          console.error("Explore server query error:", err);
         }
       } finally {
         setIsLoading(false);
       }
     }
 
-    fetchFilteredCatalog();
+    fetchCatalogPage1();
 
     return () => {
       abortController.abort();
     };
   }, [selectedGenres, debouncedSearch, statusFilter, sortBy]);
 
-  // Handle load more pagination
-  const handleLoadMore = async () => {
-    if (isLoadingMore || !pageInfo?.hasNextPage) return;
+  // Load next page dynamically
+  const handleLoadMore = useCallback(async () => {
+    if (isLoadingMore || isLoading || !hasNextPage) return;
 
     setIsLoadingMore(true);
     const nextPage = page + 1;
@@ -109,7 +100,7 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
     try {
       const params = new URLSearchParams();
       params.set("page", String(nextPage));
-      params.set("perPage", "24");
+      params.set("perPage", "50");
       params.set("sort", sortBy);
 
       if (selectedGenres.length > 0) {
@@ -135,14 +126,41 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
           return [...prev, ...additions];
         });
         setPage(nextPage);
-        setPageInfo(data.pageInfo ?? null);
+        const pageInfo: PageInfo | undefined = data.pageInfo;
+        setHasNextPage(Boolean(pageInfo?.hasNextPage));
+        if (typeof pageInfo?.total === "number") {
+          setTotalMatching(pageInfo.total);
+        }
       }
     } catch (err) {
       console.error("Explore load more error:", err);
     } finally {
       setIsLoadingMore(false);
     }
-  };
+  }, [page, hasNextPage, isLoading, isLoadingMore, sortBy, selectedGenres, debouncedSearch, statusFilter]);
+
+  // IntersectionObserver for seamless infinite scrolling
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries[0];
+        if (first && first.isIntersecting && hasNextPage && !isLoading && !isLoadingMore) {
+          handleLoadMore();
+        }
+      },
+      {
+        root: null,
+        rootMargin: "350px",
+        threshold: 0.1,
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNextPage, isLoading, isLoadingMore, handleLoadMore]);
 
   const toggleGenre = (genre: string) => {
     setSelectedGenres((prev) =>
@@ -161,8 +179,6 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
   const hasActiveFilters =
     selectedGenres.length > 0 || searchQuery.trim().length > 0 || statusFilter !== "All";
 
-  const totalCount = pageInfo?.total ?? items.length;
-
   return (
     <div className="space-y-8 pb-20">
       {/* Header with Title + Search */}
@@ -170,7 +186,9 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
         <div>
           <h1 className="font-serif text-4xl text-text">Explore</h1>
           <p className="text-text-3 text-sm pt-1">
-            {totalCount} titles available in archive
+            {totalMatching > 0
+              ? `${totalMatching.toLocaleString()} titles available in archive`
+              : "Browsing anime archive"}
           </p>
         </div>
 
@@ -179,7 +197,7 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
           <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3" size={16} />
           <input
             type="text"
-            placeholder="Search by title, genre, keyword..."
+            placeholder="Search by title, keyword..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-surface border border-line text-text placeholder-text-3 rounded-control pl-9 pr-4 py-2 text-sm focus:outline-none focus:border-accent"
@@ -231,7 +249,7 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
               <span className="text-accent font-medium">
                 {selectedGenres.join(" + ")}
               </span>
-              <span className="text-text-3 font-mono">({totalCount} titles)</span>
+              <span className="text-text-3 font-mono">({totalMatching.toLocaleString()} titles)</span>
             </div>
             <button
               type="button"
@@ -281,11 +299,11 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
         )}
       </div>
 
-      {/* Content Area: Loading / Grid / Empty State */}
+      {/* Content Area: Initial Loading / Grid / Empty State */}
       {isLoading ? (
         <div className="py-24 text-center space-y-3">
           <div className="w-7 h-7 rounded-full border-2 border-line border-t-accent animate-spin mx-auto" />
-          <p className="text-text-2 text-xs">Filtering archive titles...</p>
+          <p className="text-text-2 text-xs">Querying Yoake archive database...</p>
         </div>
       ) : items.length > 0 ? (
         <div className="space-y-8">
@@ -299,16 +317,19 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({ catalog, onSelectAnime
             ))}
           </div>
 
-          {/* Load More Pagination Button */}
-          {pageInfo?.hasNextPage && (
-            <div className="text-center pt-4">
+          {/* Sentinel for Infinite Scroll */}
+          <div ref={sentinelRef} className="h-8 w-full" aria-hidden="true" />
+
+          {/* Infinite Scroll Indicator / Manual Fallback Button */}
+          {hasNextPage && (
+            <div className="text-center pt-2 pb-6">
               <Button
                 variant="secondary"
                 disabled={isLoadingMore}
                 onClick={handleLoadMore}
-                className="min-w-[160px]"
+                className="min-w-[180px]"
               >
-                {isLoadingMore ? "Loading titles..." : "Load more anime"}
+                {isLoadingMore ? "Loading more titles..." : "Load more anime"}
               </Button>
             </div>
           )}

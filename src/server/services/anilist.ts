@@ -339,6 +339,70 @@ export async function fetchAniListById(anilistId: number): Promise<Anime | null>
   }
 }
 
+// Cache for global archive stats (TTL 1 hour)
+let cachedArchiveStats: { total: number; expiresAt: number } | null = null;
+const ARCHIVE_STATS_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+export async function getAniListArchiveStats(): Promise<{ total: number }> {
+  const now = Date.now();
+  if (cachedArchiveStats && cachedArchiveStats.expiresAt > now) {
+    return { total: cachedArchiveStats.total };
+  }
+
+  const query = `
+    query {
+      SiteStatistics {
+        anime(sort: DATE_DESC, perPage: 1) {
+          nodes {
+            count
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const response = await fetch(ANILIST_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": SERVER_CONFIG.chromeUserAgent,
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(SERVER_CONFIG.metadataTimeoutMs),
+    });
+
+    if (response.ok) {
+      const payload = (await response.json()) as {
+        data?: {
+          SiteStatistics?: {
+            anime?: {
+              nodes?: Array<{ count?: number }>;
+            };
+          };
+        };
+      };
+
+      const count = payload.data?.SiteStatistics?.anime?.nodes?.[0]?.count;
+      if (typeof count === "number" && count > 0) {
+        cachedArchiveStats = { total: count, expiresAt: now + ARCHIVE_STATS_TTL_MS };
+        return { total: count };
+      }
+    }
+  } catch {
+    // Graceful fallback below
+  }
+
+  if (cachedArchiveStats) {
+    return { total: cachedArchiveStats.total };
+  }
+
+  const fallbackTotal = 22686;
+  cachedArchiveStats = { total: fallbackTotal, expiresAt: now + ARCHIVE_STATS_TTL_MS };
+  return { total: fallbackTotal };
+}
+
 export async function queryAniListCatalog(
   params: AniListQueryParams
 ): Promise<AniListQueryResult> {
@@ -353,7 +417,7 @@ export async function queryAniListCatalog(
   const hasIsekai = uniqueGenres.some((g) => g.toLowerCase() === "isekai");
 
   const page = Math.max(params.page ?? 1, 1);
-  const perPage = Math.min(Math.max(params.perPage ?? 24, 1), 50);
+  const perPage = Math.min(Math.max(params.perPage ?? 50, 1), 50);
 
   const cacheKey = JSON.stringify({
     search: params.search?.toLowerCase().trim(),
@@ -466,6 +530,13 @@ export async function queryAniListCatalog(
       lastPage: page,
       hasNextPage: false,
     };
+
+    const isUnfiltered =
+      !params.search?.trim() && uniqueGenres.length === 0 && !params.status?.trim();
+    if (isUnfiltered && (pageInfo.total <= 5000 || pageInfo.total === 0)) {
+      const stats = await getAniListArchiveStats();
+      pageInfo.total = stats.total;
+    }
 
     const result: AniListQueryResult = { items, pageInfo };
     catalogQueryCache.set(cacheKey, { data: result, expiresAt: now + CACHE_TTL_MS });

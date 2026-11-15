@@ -11,6 +11,7 @@ type ViewMode = "home" | "explore" | "details" | "watch";
 export const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>("home");
   const [catalog, setCatalog] = useState<Anime[]>([]);
+  const [archiveTotal, setArchiveTotal] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,6 +31,13 @@ export const App: React.FC = () => {
         const data = await res.json();
         if (data.ok && Array.isArray(data.items)) {
           setCatalog(data.items);
+          const total =
+            typeof data.archiveTotal === "number" && data.archiveTotal > 0
+              ? data.archiveTotal
+              : typeof data.pageInfo?.total === "number" && data.pageInfo.total > 0
+                ? data.pageInfo.total
+                : data.items.length;
+          setArchiveTotal(total);
         } else {
           throw new Error("Invalid catalog response format");
         }
@@ -94,7 +102,9 @@ export const App: React.FC = () => {
 
           {/* Quick status */}
           <div className="text-xs text-text-3 font-mono hidden sm:block">
-            {catalog.length} archive titles · Stream engine online
+            {archiveTotal > 0
+              ? `${archiveTotal.toLocaleString()} archive titles · Stream engine online`
+              : "Stream engine online"}
           </div>
         </div>
       </header>

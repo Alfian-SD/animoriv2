@@ -117,4 +117,33 @@ describe("Express API Integration", () => {
       expect(lowerGenres).toContain("romance");
     }
   });
+
+  it("GET /api/catalog/stats returns archiveTotal > 10000", async () => {
+    const res = await fetch(`${baseUrl}/api/catalog/stats`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(typeof body.archiveTotal).toBe("number");
+    expect(body.archiveTotal).toBeGreaterThan(10000);
+  });
+
+  it("GET /api/catalog pagination supports 50 items per page and page 2 returns distinct items", async () => {
+    const resPage1 = await fetch(`${baseUrl}/api/catalog?page=1&perPage=50`);
+    expect(resPage1.status).toBe(200);
+    const bodyPage1 = await resPage1.json();
+    expect(bodyPage1.ok).toBe(true);
+    expect(bodyPage1.items.length).toBeGreaterThanOrEqual(50);
+    expect(bodyPage1.pageInfo.total).toBeGreaterThan(10000);
+    expect(bodyPage1.archiveTotal).toBeGreaterThan(10000);
+
+    const resPage2 = await fetch(`${baseUrl}/api/catalog?page=2&perPage=50`);
+    expect(resPage2.status).toBe(200);
+    const bodyPage2 = await resPage2.json();
+    expect(bodyPage2.ok).toBe(true);
+    expect(bodyPage2.items.length).toBeGreaterThanOrEqual(20);
+
+    const page1Ids = new Set(bodyPage1.items.map((a: { id: string }) => a.id));
+    const overlap = bodyPage2.items.filter((a: { id: string }) => page1Ids.has(a.id));
+    expect(overlap.length).toBe(0);
+  });
 });
